@@ -63,6 +63,34 @@ router.post("/create", async (req, res) => {
       logger.warn("商品名稱長度超過限制")
       return sendError(res, response.invalid_name, '商品名稱長度超過限制');
     }
+    if(specification.length > 100){
+      logger.warn("品名規格長度超過限制")
+      return sendError(res, response.invalid_specification, '品名規格長度超過限制');
+    }
+    if(manufactor.length > 10){
+      logger.warn("廠商長度超過限制")
+      return sendError(res, response.invalid_manufactor, '廠商長度超過限制');
+    }
+    if(brand.length > 10){
+      logger.warn("品牌長度超過限制")
+      return sendError(res, response.invalid_brand, '品牌長度超過限制');
+    }
+    if(size.length > 10){
+      logger.warn("尺寸長度超過限制")
+      return sendError(res, response.invalid_size, '尺寸長度超過限制');
+    }
+    if((product_type1 && product_type1.length > 10) || (product_type2 && product_type2.length > 10) || (product_type3 && product_type3.length > 10) || (product_type4 && product_type4.length > 10)){
+      logger.warn("類別長度超過限制")
+      return sendError(res, response.invalid_type, '類別長度超過限制');
+    }
+    if((isNaN(price) || price < 0)){
+      logger.warn("錯誤的金額")
+      return sendError(res, response.invalid_price, '錯誤的金額');
+    }
+    if(sale_price && (isNaN(sale_price) || sale_price < 0)){
+      logger.warn("錯誤的特價金額")
+      return sendError(res, response.invalid_sale_price, '錯誤的特價金額');
+    }
     if(remark && remark.length > 100){
       logger.warn("備註長度超過限制")
       return sendError(res, response.invalid_remark, '備註長度超過限制');
@@ -189,8 +217,8 @@ router.post("/detail", async (req, res) => {
 })
 // 修改
 router.post("/update", async (req, res) => {
-  let { product_id, product_name, remark} = req.body;
-    if(!product_id  || !product_name ){
+  let { product_id, create_date, product_name,specification,manufactor,brand,size,product_type1,product_type2,product_type3,product_type4,price,sale_price, remark} = req.body;
+    if(!product_id || !create_date || !product_name || !specification || !manufactor || !brand || !size || !price){
       logger.warn("缺少必要資料")
       return sendError(res, response.missing_info, '缺少必要資料');
     }
@@ -202,24 +230,71 @@ router.post("/update", async (req, res) => {
       logger.warn("商品名稱長度超過限制")
       return sendError(res, response.invalid_name, '商品名稱長度超過限制');
     }
+    if(specification.length > 100){
+      logger.warn("品名規格長度超過限制")
+      return sendError(res, response.invalid_specification, '品名規格長度超過限制');
+    }
+    if(manufactor.length > 10){
+      logger.warn("廠商長度超過限制")
+      return sendError(res, response.invalid_manufactor, '廠商長度超過限制');
+    }
+    if(brand.length > 10){
+      logger.warn("品牌長度超過限制")
+      return sendError(res, response.invalid_brand, '品牌長度超過限制');
+    }
+    if(size.length > 10){
+      logger.warn("尺寸長度超過限制")
+      return sendError(res, response.invalid_size, '尺寸長度超過限制');
+    }
+    if((product_type1 && product_type1.length > 10) || (product_type2 && product_type2.length > 10) || (product_type3 && product_type3.length > 10) || (product_type4 && product_type4.length > 10)){
+      logger.warn("類別長度超過限制")
+      return sendError(res, response.invalid_type, '類別長度超過限制');
+    }
+    if((isNaN(price) || price < 0)){
+      logger.warn("錯誤的金額")
+      return sendError(res, response.invalid_price, '錯誤的金額');
+    }
+    if(sale_price && (isNaN(sale_price) || sale_price < 0)){
+      logger.warn("錯誤的特價金額")
+      return sendError(res, response.invalid_sale_price, '錯誤的特價金額');
+    }
     if(remark && remark.length > 100){
       logger.warn("備註長度超過限制")
       return sendError(res, response.invalid_remark, '備註長度超過限制');
     }
     try {
-     const result = await db.query(
+     const nameResult = await db.query(
       "SELECT product_id FROM product WHERE product_name = $1 AND product_id <> $2",
       [product_name, product_id]
     );
     
-    if (result.rows.length > 0) {
+    if (nameResult.rows.length > 0) {
       logger.warn("名稱已被使用");
       return sendError(res, response.name_conflict, "名稱已被使用");
     }
+    const specificationResult = await db.query(
+      "SELECT product_id FROM product WHERE specification = $1 AND product_id <> $2",
+      [specification, product_id]
+    );
+    
+    if (specificationResult.rows.length > 0) {
+      logger.warn("品名規格已被使用");
+      return sendError(res, response.specification_conflict, "品名規格已被使用");
+    }
     await db.query(
-     `UPDATE size SET product_name = $1,remark = $2 WHERE product_id = $3`,
+     `UPDATE product SET product_name = $1,specification = $2,manufactor = $3,brand = $4,size = $5,product_type1 = $6,product_type2 = $7,product_type3 = $8,product_type4 = $9,price = $10,sale_price = $11,remark = $12 WHERE product_id = $13`,
      [
       product_name,
+      specification,
+      manufactor,
+      brand,
+      size,
+      product_type1,
+      product_type2,
+      product_type3,
+      product_type4,
+      price,
+      sale_price,
       remark,
       product_id,
     ]
