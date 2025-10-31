@@ -3,6 +3,13 @@ const logger = require('../logger')
 const db =require('../db')
 const response=require('../utils/response_codes')
 const router = express.Router();
+const dayjs = require("dayjs")
+const utc = require('dayjs/plugin/utc');
+const timezone = require('dayjs/plugin/timezone');
+dayjs.extend(utc);
+dayjs.extend(timezone);
+const taipeiTime = dayjs().tz('Asia/Taipei').format('YYYY-MM-DD HH:mm:ss');
+
 function sendError(res, code, msg, status = 400) {
   return res.status(status).json({ code, msg });
 }
@@ -27,6 +34,12 @@ router.post("/info", async (req, res) => {
       `
     );
     const sizeList = sizeResult.rows;
+    const colorResult =  await db.query(
+      `SELECT color_id, color_name 
+      FROM color 
+      `
+    );
+    const colorList = colorResult.rows;
     const typeResult =  await db.query(
       `SELECT type_id, type_name 
       FROM type 
@@ -40,7 +53,30 @@ router.post("/info", async (req, res) => {
         manufactorList,
         brandList,
         sizeList,
+        colorList,
         typeList
+      }
+    });
+  } catch (error) {
+    logger.error(error)
+    return sendError(res, response.server_error, "伺服器錯誤，請稍後再試", 500);
+  }
+});
+// 表格資訊
+router.post("/productList", async (req, res) => {
+  try {
+    const result =  await db.query(
+      `SELECT specification, product_name 
+      FROM product 
+      `
+    );
+    const productList = result.rows
+    
+    res.status(200).json({
+      code: response.success,
+      msg: "查詢成功",
+      data: {
+        productList
       }
     });
   } catch (error) {
@@ -50,8 +86,8 @@ router.post("/info", async (req, res) => {
 });
 // 新增
 router.post("/create", async (req, res) => {
-    let { product_id, create_date, product_name,specification,manufactor,brand,size,product_type1,product_type2,product_type3,product_type4,price,sale_price, remark} = req.body;
-    if(!product_id || !create_date || !product_name || !specification || !manufactor || !brand || !size || !price){
+    let { product_id, product_name,specification,manufactor,brand,size,color,product_type1,product_type2,product_type3,product_type4,price, remark} = req.body;
+    if(!product_id || !product_name || !specification || !manufactor || !brand || !size || !color || !price){
       logger.warn("缺少必要資料")
       return sendError(res, response.missing_info, '缺少必要資料');
     }
@@ -59,27 +95,31 @@ router.post("/create", async (req, res) => {
       logger.warn("編號格式錯誤")
       return sendError(res, response.invalid_id, '編號格式錯誤，必須為1~20位數字');
     }
-    if(product_name.length > 100){
+    if(product_name.length > 20){
       logger.warn("商品名稱長度超過限制")
       return sendError(res, response.invalid_name, '商品名稱長度超過限制');
     }
-    if(specification.length > 100){
-      logger.warn("品名規格長度超過限制")
-      return sendError(res, response.invalid_specification, '品名規格長度超過限制');
+    if(specification.length > 20){
+      logger.warn("商品規格長度超過限制")
+      return sendError(res, response.invalid_specification, '商品規格長度超過限制');
     }
-    if(manufactor.length > 10){
+    if(manufactor.length > 5){
       logger.warn("廠商長度超過限制")
       return sendError(res, response.invalid_manufactor, '廠商長度超過限制');
     }
-    if(brand.length > 10){
+    if(brand.length > 5){
       logger.warn("品牌長度超過限制")
       return sendError(res, response.invalid_brand, '品牌長度超過限制');
     }
-    if(size.length > 10){
+    if(size.length > 5){
       logger.warn("尺寸長度超過限制")
       return sendError(res, response.invalid_size, '尺寸長度超過限制');
     }
-    if((product_type1 && product_type1.length > 10) || (product_type2 && product_type2.length > 10) || (product_type3 && product_type3.length > 10) || (product_type4 && product_type4.length > 10)){
+    if(color.length > 5){
+      logger.warn("顏色長度超過限制")
+      return sendError(res, response.invalid_color, '顏色長度超過限制');
+    }
+    if((product_type1 && product_type1.length > 5) || (product_type2 && product_type2.length > 5) || (product_type3 && product_type3.length > 5) || (product_type4 && product_type4.length > 5)){
       logger.warn("類別長度超過限制")
       return sendError(res, response.invalid_type, '類別長度超過限制');
     }
@@ -87,38 +127,23 @@ router.post("/create", async (req, res) => {
       logger.warn("錯誤的金額")
       return sendError(res, response.invalid_price, '錯誤的金額');
     }
-    if(sale_price && (isNaN(sale_price) || sale_price < 0)){
-      logger.warn("錯誤的特價金額")
-      return sendError(res, response.invalid_sale_price, '錯誤的特價金額');
-    }
     if(remark && remark.length > 100){
       logger.warn("備註長度超過限制")
       return sendError(res, response.invalid_remark, '備註長度超過限制');
     }
 
     try {
-      const result = await db.query(
-      "SELECT product_id, product_name,specification FROM product WHERE product_id = $1 OR product_name = $2 OR specification = $3",
-      [product_id, product_name,specification]
+    const result = await db.query(
+      "SELECT specification FROM product WHERE specification = $1",
+      [specification]
     );
-    const rows = result.rows
-    for (const row of rows) {
-      if (row.product_id === product_id) {
-        logger.warn("編號已被使用")
-        return sendError(res, response.id_conflict, "編號已被使用");
-      }
-      if (row.product_name === product_name) {
-        logger.warn("名稱已被使用")
-        return sendError(res, response.name_conflict, "名稱已被使用");
-      }
-      if(row.specification === specification) {
-        logger.warn("品名規格已被使用")
-        return sendError(res, response.specification_conflict, "品名規格已被使用");
-      }
+    if (result.rows.length > 0) {
+      logger.warn("商品規格已被使用");
+      return sendError(res, response.specification_conflict, "同一商品的商品規格已被使用");
     }
     await db.query(
-      "INSERT INTO product (product_id, create_date, product_name, specification, manufactor, brand, size, product_type1, product_type2, product_type3, product_type4, price, sale_price, remark) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
-      [product_id, create_date, product_name, specification, manufactor, brand, size, product_type1, product_type2, product_type3, product_type4, price, sale_price, remark]
+      "INSERT INTO product (product_id, create_date, product_name, specification, manufactor, brand, size, color, product_type1, product_type2, product_type3, product_type4, price, remark) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
+      [product_id, taipeiTime, product_name, specification, manufactor, brand, size, color, product_type1, product_type2, product_type3, product_type4, price, remark]
     );
      res.status(200).json({
       code: response.success,
@@ -149,6 +174,10 @@ router.post("/list", async (req, res) => {
         conditions.push(`product_id ILIKE $${paramIndex++}`);
         values.push(`%${filter.product_id}%`);
       }
+      if (filter.specification) {
+        conditions.push(`specification ILIKE $${paramIndex++}`);
+        values.push(`%${filter.specification}%`);
+      }
       if (filter.product_name) {
         conditions.push(`product_name ILIKE $${paramIndex++}`);
         values.push(`%${filter.product_name}%`);
@@ -158,7 +187,7 @@ router.post("/list", async (req, res) => {
     const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   try {
     const result =  await db.query(
-      `SELECT product_id, product_name
+      `SELECT product_id, product_name,specification
       FROM product 
       ${whereClause} 
       ORDER BY product_id ${sort} 
@@ -190,15 +219,15 @@ router.post("/list", async (req, res) => {
 })
 // 查詢詳細資料
 router.post("/detail", async (req, res) => {
-  const { product_id } = req.body;
-  if(!product_id){
+  const { specification } = req.body;
+  if(!specification){
     logger.warn("缺少必要資料")
     return sendError(res, response.missing_info, '缺少必要資料');
   }
   try {
     const result =  await db.query(
-      "SELECT * FROM product WHERE product_id = $1",
-      [product_id]
+      "SELECT * FROM product WHERE specification = $1",
+      [specification]
     );
     const product = result.rows[0];
     if(!product){
@@ -217,8 +246,8 @@ router.post("/detail", async (req, res) => {
 })
 // 修改
 router.post("/update", async (req, res) => {
-  let { product_id, create_date, product_name,specification,manufactor,brand,size,product_type1,product_type2,product_type3,product_type4,price,sale_price, remark} = req.body;
-    if(!product_id || !create_date || !product_name || !specification || !manufactor || !brand || !size || !price){
+  let { product_id, create_date, product_name,specification,manufactor,brand,size,color,product_type1,product_type2,product_type3,product_type4,price, remark} = req.body;
+    if(!product_id || !create_date || !product_name || !specification || !manufactor || !brand || !size || !color || !price){
       logger.warn("缺少必要資料")
       return sendError(res, response.missing_info, '缺少必要資料');
     }
@@ -226,27 +255,31 @@ router.post("/update", async (req, res) => {
       logger.warn("編號格式錯誤")
       return sendError(res, response.invalid_id, '編號格式錯誤，必須為1~20位數字');
     }
-    if(product_name.length > 100){
+    if(product_name.length > 20){
       logger.warn("商品名稱長度超過限制")
       return sendError(res, response.invalid_name, '商品名稱長度超過限制');
     }
-    if(specification.length > 100){
-      logger.warn("品名規格長度超過限制")
-      return sendError(res, response.invalid_specification, '品名規格長度超過限制');
+    if(specification.length > 20){
+      logger.warn("商品規格長度超過限制")
+      return sendError(res, response.invalid_specification, '商品規格長度超過限制');
     }
-    if(manufactor.length > 10){
+    if(manufactor.length > 5){
       logger.warn("廠商長度超過限制")
       return sendError(res, response.invalid_manufactor, '廠商長度超過限制');
     }
-    if(brand.length > 10){
+    if(brand.length > 5){
       logger.warn("品牌長度超過限制")
       return sendError(res, response.invalid_brand, '品牌長度超過限制');
     }
-    if(size.length > 10){
+    if(size.length > 5){
       logger.warn("尺寸長度超過限制")
       return sendError(res, response.invalid_size, '尺寸長度超過限制');
     }
-    if((product_type1 && product_type1.length > 10) || (product_type2 && product_type2.length > 10) || (product_type3 && product_type3.length > 10) || (product_type4 && product_type4.length > 10)){
+    if(color.length > 5){
+      logger.warn("顏色長度超過限制")
+      return sendError(res, response.invalid_color, '顏色長度超過限制');
+    }
+    if((product_type1 && product_type1.length > 5) || (product_type2 && product_type2.length > 5) || (product_type3 && product_type3.length > 5) || (product_type4 && product_type4.length > 5)){
       logger.warn("類別長度超過限制")
       return sendError(res, response.invalid_type, '類別長度超過限制');
     }
@@ -254,49 +287,26 @@ router.post("/update", async (req, res) => {
       logger.warn("錯誤的金額")
       return sendError(res, response.invalid_price, '錯誤的金額');
     }
-    if(sale_price && (isNaN(sale_price) || sale_price < 0)){
-      logger.warn("錯誤的特價金額")
-      return sendError(res, response.invalid_sale_price, '錯誤的特價金額');
-    }
     if(remark && remark.length > 100){
       logger.warn("備註長度超過限制")
       return sendError(res, response.invalid_remark, '備註長度超過限制');
     }
     try {
-     const nameResult = await db.query(
-      "SELECT product_id FROM product WHERE product_name = $1 AND product_id <> $2",
-      [product_name, product_id]
-    );
-    
-    if (nameResult.rows.length > 0) {
-      logger.warn("名稱已被使用");
-      return sendError(res, response.name_conflict, "名稱已被使用");
-    }
-    const specificationResult = await db.query(
-      "SELECT product_id FROM product WHERE specification = $1 AND product_id <> $2",
-      [specification, product_id]
-    );
-    
-    if (specificationResult.rows.length > 0) {
-      logger.warn("品名規格已被使用");
-      return sendError(res, response.specification_conflict, "品名規格已被使用");
-    }
     await db.query(
-     `UPDATE product SET product_name = $1,specification = $2,manufactor = $3,brand = $4,size = $5,product_type1 = $6,product_type2 = $7,product_type3 = $8,product_type4 = $9,price = $10,sale_price = $11,remark = $12 WHERE product_id = $13`,
+     `UPDATE product SET product_name = $1,manufactor = $2,brand = $3,size = $4,color = $5,product_type1 = $6,product_type2 = $7,product_type3 = $8,product_type4 = $9,price = $10,remark = $11 WHERE specification = $12`,
      [
       product_name,
-      specification,
       manufactor,
       brand,
       size,
+      color,
       product_type1,
       product_type2,
       product_type3,
       product_type4,
       price,
-      sale_price,
       remark,
-      product_id,
+      specification
     ]
     );
      res.status(200).json({
@@ -309,15 +319,15 @@ router.post("/update", async (req, res) => {
     }
 });
 router.post("/delete", async (req, res) => {
-  const { product_id } = req.body;
-    if(!product_id){
+  const { specification } = req.body;
+    if(!specification){
       logger.warn("缺少必要資料")
       return sendError(res, response.missing_info, '缺少必要資料');
     }
     try {
       await db.query(
-      "DELETE FROM product WHERE product_id = $1",
-      [product_id]
+      "DELETE FROM product WHERE specification = $1",
+      [specification]
     );
       res.status(200).json({
       code: response.success,

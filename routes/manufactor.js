@@ -3,29 +3,37 @@ const logger = require('../logger')
 const db =require('../db')
 const response=require('../utils/response_codes')
 const router = express.Router();
+const dayjs = require("dayjs")
+const utc = require('dayjs/plugin/utc');
+const timezone = require('dayjs/plugin/timezone');
+dayjs.extend(utc);
+dayjs.extend(timezone);
+const taipeiTime = dayjs().tz('Asia/Taipei').format('YYYY-MM-DD HH:mm:ss');
+
 function sendError(res, code, msg, status = 400) {
   return res.status(status).json({ code, msg });
 }
+
 // 新增
 router.post("/create", async (req, res) => {
-    let { manufactor_id, unified_number, create_date, manufactor_name, contact_person, phone, email, tax_rate, discount, ticket_period, remark} = req.body;
-    if(!manufactor_id || !create_date || !manufactor_name){
+    let { manufactor_id, unified_number, manufactor_name, contact_person, phone, email, tax_rate, discount, ticket_period, remark} = req.body;
+    if(!manufactor_id || !manufactor_name){
       logger.warn("缺少必要資料")
       return sendError(res, response.missing_info, '缺少必要資料');
     }
-    if (!/^\d{1,20}$/.test(manufactor_id)) {
+    if (!/^\d{1,5}$/.test(manufactor_id)) {
       logger.warn("編號格式錯誤")
-      return sendError(res, response.invalid_id, '編號格式錯誤，必須為1~20位數字');
+      return sendError(res, response.invalid_id, '編號格式錯誤，必須為1~5位數字');
     }
     if (unified_number && !/^\d{8}$/.test(unified_number)) {
       logger.warn("統一編號格式錯誤")
       return sendError(res, response.invalid_unified_number, '統一編號格式錯誤，必須為8位數字');
     }
-    if(manufactor_name.length > 100){
+    if(manufactor_name.length > 20){
       logger.warn("廠商名稱長度超過限制")
       return sendError(res, response.invalid_name, '廠商名稱長度超過限制');
     }
-    if(contact_person && contact_person.length > 20){
+    if(contact_person && contact_person.length > 10){
       logger.warn("聯絡人長度超過限制")
       return sendError(res, response.invalid_contact, '聯絡人長度超過限制');
     }
@@ -76,7 +84,7 @@ router.post("/create", async (req, res) => {
     ticket_period = ticket_period || 0;
     await db.query(
       "INSERT INTO manufactor (manufactor_id, unified_number, create_date, manufactor_name, contact_person, phone, email, tax_rate, discount, ticket_period, remark) VALUES ($1, $2, $3, $4, $5 , $6, $7, $8, $9, $10, $11)",
-      [manufactor_id, unified_number, create_date, manufactor_name, contact_person, phone, email, tax_rate, discount, ticket_period, remark]
+      [manufactor_id, unified_number, taipeiTime, manufactor_name, contact_person, phone, email, tax_rate, discount, ticket_period, remark]
     );
      res.status(200).json({
       code: response.success,
@@ -180,19 +188,19 @@ router.post("/update", async (req, res) => {
       logger.warn("缺少必要資料")
       return sendError(res, response.missing_info, '缺少必要資料');
     }
-    if (!/^\d{1,20}$/.test(manufactor_id)) {
+    if (!/^\d{1,5}$/.test(manufactor_id)) {
       logger.warn("編號格式錯誤")
-      return sendError(res, response.invalid_id, '編號格式錯誤，必須為1~20位數字');
+      return sendError(res, response.invalid_id, '編號格式錯誤，必須為1~5位數字');
     }
     if (unified_number && !/^\d{8}$/.test(unified_number)) {
       logger.warn("統一編號格式錯誤")
       return sendError(res, response.invalid_unified_number, '統一編號格式錯誤，必須為8位數字');
     }
-    if(manufactor_name.length > 100){
+    if(manufactor_name.length > 20){
       logger.warn("廠商名稱長度超過限制")
       return sendError(res, response.invalid_name, '廠商名稱長度超過限制');
     }
-    if(contact_person && contact_person.length > 20){
+    if(contact_person && contact_person.length > 10){
       logger.warn("聯絡人長度超過限制")
       return sendError(res, response.invalid_contact, '聯絡人長度超過限制');
     }

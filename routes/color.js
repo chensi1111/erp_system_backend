@@ -13,39 +13,20 @@ const taipeiTime = dayjs().tz('Asia/Taipei').format('YYYY-MM-DD HH:mm:ss');
 function sendError(res, code, msg, status = 400) {
   return res.status(status).json({ code, msg });
 }
-function validateSizeList(size_list) {
-  const sizes = size_list
-    .split(',')
-    .map(s => s.trim())
-    .filter(Boolean); // 去掉空值
-
-  const uniqueSizes = new Set(sizes);
-
-  if (uniqueSizes.size !== sizes.length) {
-    // 有重複
-    return false;
-  }
-
-  return true;
-}
 // 新增
 router.post("/create", async (req, res) => {
-    let { size_id, size_name,size_list, remark} = req.body;
-    if(!size_id || !size_name|| !size_list){
+    let { color_id,  color_name, remark} = req.body;
+    if(!color_id || !color_name){
       logger.warn("缺少必要資料")
       return sendError(res, response.missing_info, '缺少必要資料');
     }
-    if (!/^\d{1,5}$/.test(size_id)) {
+    if (!/^\d{1,5}$/.test(color_id)) {
       logger.warn("編號格式錯誤")
       return sendError(res, response.invalid_id, '編號格式錯誤，必須為1~5位數字');
     }
-    if(!validateSizeList(size_list)){
-      logger.warn("尺碼列表有重複值")
-      return sendError(res, response.invalid_size_list, '尺碼列表有重複值');
-    }
-    if(size_name.length > 20){
-      logger.warn("尺寸名稱長度超過限制")
-      return sendError(res, response.invalid_name, '尺寸名稱長度超過限制');
+    if(color_name.length > 20){
+      logger.warn("顏色名稱長度超過限制")
+      return sendError(res, response.invalid_name, '顏色名稱長度超過限制');
     }
     if(remark && remark.length > 100){
       logger.warn("備註長度超過限制")
@@ -53,23 +34,23 @@ router.post("/create", async (req, res) => {
     }
     try {
       const result = await db.query(
-      "SELECT size_id, size_name FROM size WHERE size_id = $1 OR size_name = $2",
-      [size_id, size_name]
+      "SELECT color_id, color_name FROM color WHERE color_id = $1 OR color_name = $2",
+      [color_id, color_name]
     );
     const rows = result.rows
     for (const row of rows) {
-      if (row.size_id === size_id) {
+      if (row.color_id === color_id) {
         logger.warn("編號已被使用")
         return sendError(res, response.id_conflict, "編號已被使用");
       }
-      if (row.size_name === size_name) {
+      if (row.color_name === color_name) {
         logger.warn("名稱已被使用")
         return sendError(res, response.name_conflict, "名稱已被使用");
       }
     }
     await db.query(
-      "INSERT INTO size (size_id, create_date, size_name, size_list, remark) VALUES ($1, $2, $3, $4, $5)",
-      [size_id, taipeiTime, size_name, size_list, remark]
+      "INSERT INTO color (color_id, create_date, color_name, remark) VALUES ($1, $2, $3, $4)",
+      [color_id, taipeiTime, color_name, remark]
     );
      res.status(200).json({
       code: response.success,
@@ -96,30 +77,30 @@ router.post("/list", async (req, res) => {
     if (filter) {
       // ILIKE不區分大小寫
       // %value%部分相符比對
-      if (filter.size_id) {
-        conditions.push(`size_id ILIKE $${paramIndex++}`);
-        values.push(`%${filter.size_id}%`);
+      if (filter.color_id) {
+        conditions.push(`color_id ILIKE $${paramIndex++}`);
+        values.push(`%${filter.color_id}%`);
       }
-      if (filter.size_name) {
-        conditions.push(`size_name ILIKE $${paramIndex++}`);
-        values.push(`%${filter.size_name}%`);
+      if (filter.color_name) {
+        conditions.push(`color_name ILIKE $${paramIndex++}`);
+        values.push(`%${filter.color_name}%`);
       }
     }
 
     const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   try {
     const result =  await db.query(
-      `SELECT size_id, size_name ,size_list
-      FROM size 
+      `SELECT color_id, color_name
+      FROM color 
       ${whereClause} 
-      ORDER BY size_id ${sort} 
+      ORDER BY color_id ${sort} 
       LIMIT $${paramIndex++} OFFSET $${paramIndex++}`,
       [...values,pageSize, offset]
     );
-    const sizeList = result.rows;
+    const colorList = result.rows;
     // 查詢總筆數
     const totalResult = await db.query(
-      `SELECT COUNT(*) as total FROM size ${whereClause}`,
+      `SELECT COUNT(*) as total FROM color ${whereClause}`,
       values
     );
     const total = totalResult.rows[0].total;
@@ -127,7 +108,7 @@ router.post("/list", async (req, res) => {
       code: response.success,
       msg: "查詢成功",
       data: {
-        list:sizeList,
+        list:colorList,
         total,
         page,
         pageSize,
@@ -141,25 +122,25 @@ router.post("/list", async (req, res) => {
 })
 // 查詢詳細資料
 router.post("/detail", async (req, res) => {
-  const { size_id } = req.body;
-  if(!size_id){
+  const { color_id } = req.body;
+  if(!color_id){
     logger.warn("缺少必要資料")
     return sendError(res, response.missing_info, '缺少必要資料');
   }
   try {
     const result =  await db.query(
-      "SELECT * FROM size WHERE size_id = $1",
-      [size_id]
+      "SELECT * FROM color WHERE color_id = $1",
+      [color_id]
     );
-    const size = result.rows[0];
-    if(!size){
-      logger.warn("查無此尺寸")
-      return sendError(res, response.not_found, "查無此尺寸");
+    const color = result.rows[0];
+    if(!color){
+      logger.warn("查無此顏色")
+      return sendError(res, response.not_found, "查無此顏色");
     }
     res.status(200).json({
       code: response.success,
       msg: "查詢成功",
-      data: size
+      data: color
     });
   } catch (error) {
     logger.error(error)
@@ -168,22 +149,18 @@ router.post("/detail", async (req, res) => {
 })
 // 修改
 router.post("/update", async (req, res) => {
-  let { size_id, size_name, size_list, remark} = req.body;
-    if(!size_id  || !size_name || !size_list){
+  let { color_id, color_name, remark} = req.body;
+    if(!color_id  || !color_name){
       logger.warn("缺少必要資料")
       return sendError(res, response.missing_info, '缺少必要資料');
     }
-    if (!/^\d{1,5}$/.test(size_id)) {
+    if (!/^\d{1,5}$/.test(color_id)) {
       logger.warn("編號格式錯誤")
       return sendError(res, response.invalid_id, '編號格式錯誤，必須為1~5位數字');
     }
-    if(size_name.length > 20){
-      logger.warn("尺寸名稱長度超過限制")
-      return sendError(res, response.invalid_name, '尺寸名稱長度超過限制');
-    }
-    if(!validateSizeList(size_list)){
-      logger.warn("尺碼列表有重複值")
-      return sendError(res, response.invalid_size_list, '尺碼列表有重複值');
+    if(color_name.length > 20){
+      logger.warn("顏色名稱長度超過限制")
+      return sendError(res, response.invalid_name, '顏色名稱長度超過限制');
     }
     if(remark && remark.length > 100){
       logger.warn("備註長度超過限制")
@@ -191,8 +168,8 @@ router.post("/update", async (req, res) => {
     }
     try {
      const result = await db.query(
-      "SELECT size_id FROM size WHERE size_name = $1 AND size_id <> $2",
-      [size_name, size_id]
+      "SELECT color_id FROM color WHERE color_name = $1 AND color_id <> $2",
+      [color_name, color_id]
     );
     
     if (result.rows.length > 0) {
@@ -200,12 +177,11 @@ router.post("/update", async (req, res) => {
       return sendError(res, response.name_conflict, "名稱已被使用");
     }
     await db.query(
-     `UPDATE size SET size_name = $1,size_list = $2,remark = $3 WHERE size_id = $4`,
+     `UPDATE color SET color_name = $1,remark = $2 WHERE color_id = $3`,
      [
-      size_name,
-      size_list,
+      color_name,
       remark,
-      size_id,
+      color_id,
     ]
     );
      res.status(200).json({
@@ -218,15 +194,15 @@ router.post("/update", async (req, res) => {
     }
 });
 router.post("/delete", async (req, res) => {
-  const { size_id } = req.body;
-    if(!size_id){
+  const { color_id } = req.body;
+    if(!color_id){
       logger.warn("缺少必要資料")
       return sendError(res, response.missing_info, '缺少必要資料');
     }
     try {
       await db.query(
-      "DELETE FROM size WHERE size_id = $1",
-      [size_id]
+      "DELETE FROM color WHERE color_id = $1",
+      [color_id]
     );
       res.status(200).json({
       code: response.success,

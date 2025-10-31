@@ -10,6 +10,10 @@ const sizeRouter = require('./routes/size');
 const typeRouter = require('./routes/type');
 const brandRouter = require('./routes/brand');
 const productRouter = require('./routes/product');
+const restockRouter = require('./routes/restock')
+const colorRouter = require('./routes/color')
+const stockRouter = require('./routes/stock')
+const saleRouter = require('./routes/sale')
 const corsOptions = {
   origin: process.env.BASE_URL,
   methods: ['GET', 'POST', 'OPTIONS'],
@@ -61,6 +65,10 @@ app.use('/api/size', sizeRouter);
 app.use('/api/type', typeRouter);
 app.use('/api/brand', brandRouter);
 app.use('/api/product', productRouter);
+app.use('/api/restock', restockRouter)
+app.use('/api/color', colorRouter)
+app.use('/api/stock',stockRouter)
+app.use('/api/sale',saleRouter)
 
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);

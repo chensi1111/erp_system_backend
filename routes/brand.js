@@ -3,21 +3,28 @@ const logger = require('../logger')
 const db =require('../db')
 const response=require('../utils/response_codes')
 const router = express.Router();
+const dayjs = require("dayjs")
+const utc = require('dayjs/plugin/utc');
+const timezone = require('dayjs/plugin/timezone');
+dayjs.extend(utc);
+dayjs.extend(timezone);
+const taipeiTime = dayjs().tz('Asia/Taipei').format('YYYY-MM-DD HH:mm:ss');
+
 function sendError(res, code, msg, status = 400) {
   return res.status(status).json({ code, msg });
 }
 // 新增
 router.post("/create", async (req, res) => {
-    let { brand_id, create_date, brand_name, remark} = req.body;
-    if(!brand_id || !create_date || !brand_name){
+    let { brand_id, brand_name, remark} = req.body;
+    if(!brand_id || !brand_name){
       logger.warn("缺少必要資料")
       return sendError(res, response.missing_info, '缺少必要資料');
     }
-    if (!/^\d{1,20}$/.test(brand_id)) {
+    if (!/^\d{1,5}$/.test(brand_id)) {
       logger.warn("編號格式錯誤")
-      return sendError(res, response.invalid_id, '編號格式錯誤，必須為1~20位數字');
+      return sendError(res, response.invalid_id, '編號格式錯誤，必須為1~5位數字');
     }
-    if(brand_name.length > 100){
+    if(brand_name.length > 20){
       logger.warn("品牌名稱長度超過限制")
       return sendError(res, response.invalid_name, '品牌名稱長度超過限制');
     }
@@ -43,7 +50,7 @@ router.post("/create", async (req, res) => {
     }
     await db.query(
       "INSERT INTO brand (brand_id, create_date, brand_name, remark) VALUES ($1, $2, $3, $4)",
-      [brand_id, create_date, brand_name, remark]
+      [brand_id, taipeiTime, brand_name, remark]
     );
      res.status(200).json({
       code: response.success,
@@ -147,11 +154,11 @@ router.post("/update", async (req, res) => {
       logger.warn("缺少必要資料")
       return sendError(res, response.missing_info, '缺少必要資料');
     }
-    if (!/^\d{1,20}$/.test(brand_id)) {
+    if (!/^\d{1,5}$/.test(brand_id)) {
       logger.warn("編號格式錯誤")
-      return sendError(res, response.invalid_id, '編號格式錯誤，必須為1~20位數字');
+      return sendError(res, response.invalid_id, '編號格式錯誤，必須為1~5位數字');
     }
-    if(brand_name.length > 100){
+    if(brand_name.length > 20){
       logger.warn("品牌名稱長度超過限制")
       return sendError(res, response.invalid_name, '品牌名稱長度超過限制');
     }

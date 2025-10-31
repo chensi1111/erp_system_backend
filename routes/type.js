@@ -3,21 +3,28 @@ const logger = require('../logger')
 const db =require('../db')
 const response=require('../utils/response_codes')
 const router = express.Router();
+const dayjs = require("dayjs")
+const utc = require('dayjs/plugin/utc');
+const timezone = require('dayjs/plugin/timezone');
+dayjs.extend(utc);
+dayjs.extend(timezone);
+const taipeiTime = dayjs().tz('Asia/Taipei').format('YYYY-MM-DD HH:mm:ss');
+
 function sendError(res, code, msg, status = 400) {
   return res.status(status).json({ code, msg });
 }
 // 新增
 router.post("/create", async (req, res) => {
-    let { type_id, create_date, type_name, remark} = req.body;
-    if(!type_id || !create_date || !type_name){
+    let { type_id,  type_name, remark} = req.body;
+    if(!type_id || !type_name){
       logger.warn("缺少必要資料")
       return sendError(res, response.missing_info, '缺少必要資料');
     }
-    if (!/^\d{1,20}$/.test(type_id)) {
+    if (!/^\d{1,5}$/.test(type_id)) {
       logger.warn("編號格式錯誤")
-      return sendError(res, response.invalid_id, '編號格式錯誤，必須為1~20位數字');
+      return sendError(res, response.invalid_id, '編號格式錯誤，必須為1~5位數字');
     }
-    if(type_name.length > 100){
+    if(type_name.length > 20){
       logger.warn("類別名稱長度超過限制")
       return sendError(res, response.invalid_name, '類別名稱長度超過限制');
     }
@@ -43,7 +50,7 @@ router.post("/create", async (req, res) => {
     }
     await db.query(
       "INSERT INTO type (type_id, create_date, type_name, remark) VALUES ($1, $2, $3, $4)",
-      [type_id, create_date, type_name, remark]
+      [type_id, taipeiTime, type_name, remark]
     );
      res.status(200).json({
       code: response.success,
@@ -147,11 +154,11 @@ router.post("/update", async (req, res) => {
       logger.warn("缺少必要資料")
       return sendError(res, response.missing_info, '缺少必要資料');
     }
-    if (!/^\d{1,20}$/.test(type_id)) {
+    if (!/^\d{1,5}$/.test(type_id)) {
       logger.warn("編號格式錯誤")
-      return sendError(res, response.invalid_id, '編號格式錯誤，必須為1~20位數字');
+      return sendError(res, response.invalid_id, '編號格式錯誤，必須為1~5位數字');
     }
-    if(type_name.length > 100){
+    if(type_name.length > 20){
       logger.warn("類別名稱長度超過限制")
       return sendError(res, response.invalid_name, '類別名稱長度超過限制');
     }
