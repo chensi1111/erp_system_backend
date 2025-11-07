@@ -8,7 +8,7 @@ const utc = require('dayjs/plugin/utc');
 const timezone = require('dayjs/plugin/timezone');
 dayjs.extend(utc);
 dayjs.extend(timezone);
-const taipeiTime = dayjs().tz('Asia/Taipei').format('YYYY-MM-DD HH:mm:ss');
+
 
 function sendError(res, code, msg, status = 400) {
   return res.status(status).json({ code, msg });
@@ -86,8 +86,8 @@ router.post("/productList", async (req, res) => {
 });
 // 新增
 router.post("/create", async (req, res) => {
-    let { product_id, product_name,specification,manufactor,brand,size,color,product_type1,product_type2,product_type3,product_type4,price, remark} = req.body;
-    if(!product_id || !product_name || !specification || !manufactor || !brand || !size || !color || !price){
+    let { product_id, product_name,specification,manufactor,brand,size,color,product_type1,product_type2,product_type3,product_type4,recommended_price, remark} = req.body;
+    if(!product_id || !product_name || !specification || !manufactor || !brand || !size || !color || !recommended_price){
       logger.warn("缺少必要資料")
       return sendError(res, response.missing_info, '缺少必要資料');
     }
@@ -123,7 +123,7 @@ router.post("/create", async (req, res) => {
       logger.warn("類別長度超過限制")
       return sendError(res, response.invalid_type, '類別長度超過限制');
     }
-    if((isNaN(price) || price < 0)){
+    if((isNaN(recommended_price) || recommended_price < 0)){
       logger.warn("錯誤的金額")
       return sendError(res, response.invalid_price, '錯誤的金額');
     }
@@ -141,9 +141,10 @@ router.post("/create", async (req, res) => {
       logger.warn("商品規格已被使用");
       return sendError(res, response.specification_conflict, "同一商品的商品規格已被使用");
     }
+    const taipeiTime = dayjs().tz('Asia/Taipei').format('YYYY-MM-DD HH:mm:ss');
     await db.query(
-      "INSERT INTO product (product_id, create_date, product_name, specification, manufactor, brand, size, color, product_type1, product_type2, product_type3, product_type4, price, remark) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
-      [product_id, taipeiTime, product_name, specification, manufactor, brand, size, color, product_type1, product_type2, product_type3, product_type4, price, remark]
+      "INSERT INTO product (product_id, create_date, product_name, specification, manufactor, brand, size, color, product_type1, product_type2, product_type3, product_type4, recommended_price, remark) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
+      [product_id, taipeiTime, product_name, specification, manufactor, brand, size, color, product_type1, product_type2, product_type3, product_type4, recommended_price, remark]
     );
      res.status(200).json({
       code: response.success,
@@ -246,8 +247,8 @@ router.post("/detail", async (req, res) => {
 })
 // 修改
 router.post("/update", async (req, res) => {
-  let { product_id, create_date, product_name,specification,manufactor,brand,size,color,product_type1,product_type2,product_type3,product_type4,price, remark} = req.body;
-    if(!product_id || !create_date || !product_name || !specification || !manufactor || !brand || !size || !color || !price){
+  let { product_id, create_date, product_name,specification,manufactor,brand,size,color,product_type1,product_type2,product_type3,product_type4,recommended_price, remark} = req.body;
+    if(!product_id || !create_date || !product_name || !specification || !manufactor || !brand || !size || !color || !recommended_price){
       logger.warn("缺少必要資料")
       return sendError(res, response.missing_info, '缺少必要資料');
     }
@@ -283,7 +284,7 @@ router.post("/update", async (req, res) => {
       logger.warn("類別長度超過限制")
       return sendError(res, response.invalid_type, '類別長度超過限制');
     }
-    if((isNaN(price) || price < 0)){
+    if((isNaN(recommended_price) || recommended_price < 0)){
       logger.warn("錯誤的金額")
       return sendError(res, response.invalid_price, '錯誤的金額');
     }
@@ -293,7 +294,7 @@ router.post("/update", async (req, res) => {
     }
     try {
     await db.query(
-     `UPDATE product SET product_name = $1,manufactor = $2,brand = $3,size = $4,color = $5,product_type1 = $6,product_type2 = $7,product_type3 = $8,product_type4 = $9,price = $10,remark = $11 WHERE specification = $12`,
+     `UPDATE product SET product_name = $1,manufactor = $2,brand = $3,size = $4,color = $5,product_type1 = $6,product_type2 = $7,product_type3 = $8,product_type4 = $9,recommended_price = $10,remark = $11 WHERE specification = $12`,
      [
       product_name,
       manufactor,
@@ -304,7 +305,7 @@ router.post("/update", async (req, res) => {
       product_type2,
       product_type3,
       product_type4,
-      price,
+      recommended_price,
       remark,
       specification
     ]

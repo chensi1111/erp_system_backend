@@ -155,7 +155,7 @@ router.post("/history", async (req, res) => {
       `SELECT product_id,product_name, specification,change_type,change_number,total_quantity
       FROM stock_history 
       ${whereClause} 
-      ORDER BY change_number ${sort} 
+      ORDER BY create_date ${sort} 
       LIMIT $${paramIndex++} OFFSET $${paramIndex++}`,
       [...values,pageSize, offset]
     );
@@ -208,5 +208,101 @@ router.post("/history_detail", async (req, res) => {
     logger.error(error)
     return sendError(res, response.server_error, "伺服器錯誤，請稍後再試", 500);
   } 
+})
+// 查詢安全庫存
+router.post("/safe_list", async (req, res) => {
+  const { page, pageSize, filter,sort } = req.body;
+  const offset = (page - 1) * pageSize;
+  if (page < 1 || pageSize < 1) {
+    logger.warn("錯誤的分頁資訊")
+    return sendError(res, response.invalid_pageInfo, "錯誤的分頁資訊");
+  }
+  const conditions = [];
+  const values = [];
+  let paramIndex = 1;
+
+    if (filter) {
+      // ILIKE不區分大小寫
+      // %value%部分相符比對
+      if (filter.product_id) {
+        conditions.push(`product_id ILIKE $${paramIndex++}`);
+        values.push(`%${filter.product_id}%`);
+      }
+      if (filter.specification) {
+        conditions.push(`specification ILIKE $${paramIndex++}`);
+        values.push(`%${filter.specification}%`);
+      }
+    }
+    const safetyCondition = `
+      EXISTS (
+       SELECT 1 FROM jsonb_array_elements(stock_qty::jsonb) AS elem
+       WHERE 
+         elem ? 'safe_stock'
+         AND COALESCE(NULLIF(elem->>'quantity','')::numeric, 0)
+             < COALESCE(NULLIF(elem->>'safe_stock','')::numeric, 0)
+      )
+    `;
+    const whereClause = conditions.length
+    ? `WHERE ${conditions.join(" AND ")} AND ${safetyCondition}`
+    : `WHERE ${safetyCondition}`;
+  try {
+    const result =  await db.query(
+      `SELECT product_id,product_name, specification,stock_qty
+      FROM stock 
+      ${whereClause} 
+      ORDER BY product_id ${sort} 
+      LIMIT $${paramIndex++} OFFSET $${paramIndex++}`,
+      [...values,pageSize, offset]
+    );
+    const list = result.rows;
+    // 查詢總筆數
+    const totalResult = await db.query(
+      `SELECT COUNT(*) as total FROM stock ${whereClause}`,
+      values
+    );
+    const total = totalResult.rows[0].total;
+    res.status(201).json({
+      code: response.success,
+      msg: "查詢成功",
+      data: {
+        list,
+        total,
+        page,
+        pageSize,
+        totalPages: Math.ceil(total / pageSize),
+      }
+    });
+  } catch (error) {
+    logger.error(error)
+    return sendError(res, response.server_error, "伺服器錯誤，請稍後再試", 500);
+  }
+})
+// 查詢安全庫存
+router.post("/safe_count", async (req, res) => {
+   const safetyCondition = `
+    EXISTS (
+      SELECT 1 FROM jsonb_array_elements(stock_qty::jsonb) AS elem
+      WHERE 
+        elem ? 'safe_stock' 
+        AND COALESCE(NULLIF(elem->>'quantity','')::numeric, 0) 
+            < COALESCE(NULLIF(elem->>'safe_stock','')::numeric, 0)
+    )
+  `;
+  try {
+    const totalResult = await db.query(
+      `SELECT COUNT(*) as total FROM stock WHERE ${safetyCondition}`
+    );
+    const total = totalResult.rows[0].total;
+    res.status(201).json({
+      code: response.success,
+      msg: "查詢成功",
+      data: {
+        total
+      }
+    });
+  } catch (error) {
+    logger.error(error)
+    return sendError(res, response.server_error, "伺服器錯誤，請稍後再試", 500);
+  }
 })
 module.exports = router;

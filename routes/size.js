@@ -8,7 +8,7 @@ const utc = require('dayjs/plugin/utc');
 const timezone = require('dayjs/plugin/timezone');
 dayjs.extend(utc);
 dayjs.extend(timezone);
-const taipeiTime = dayjs().tz('Asia/Taipei').format('YYYY-MM-DD HH:mm:ss');
+
 
 function sendError(res, code, msg, status = 400) {
   return res.status(status).json({ code, msg });
@@ -67,6 +67,7 @@ router.post("/create", async (req, res) => {
         return sendError(res, response.name_conflict, "名稱已被使用");
       }
     }
+    const taipeiTime = dayjs().tz('Asia/Taipei').format('YYYY-MM-DD HH:mm:ss');
     await db.query(
       "INSERT INTO size (size_id, create_date, size_name, size_list, remark) VALUES ($1, $2, $3, $4, $5)",
       [size_id, taipeiTime, size_name, size_list, remark]

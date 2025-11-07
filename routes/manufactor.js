@@ -8,7 +8,7 @@ const utc = require('dayjs/plugin/utc');
 const timezone = require('dayjs/plugin/timezone');
 dayjs.extend(utc);
 dayjs.extend(timezone);
-const taipeiTime = dayjs().tz('Asia/Taipei').format('YYYY-MM-DD HH:mm:ss');
+
 
 function sendError(res, code, msg, status = 400) {
   return res.status(status).json({ code, msg });
@@ -82,6 +82,7 @@ router.post("/create", async (req, res) => {
     tax_rate = tax_rate || 0;
     discount = discount || 0;
     ticket_period = ticket_period || 0;
+    const taipeiTime = dayjs().tz('Asia/Taipei').format('YYYY-MM-DD HH:mm:ss');
     await db.query(
       "INSERT INTO manufactor (manufactor_id, unified_number, create_date, manufactor_name, contact_person, phone, email, tax_rate, discount, ticket_period, remark) VALUES ($1, $2, $3, $4, $5 , $6, $7, $8, $9, $10, $11)",
       [manufactor_id, unified_number, taipeiTime, manufactor_name, contact_person, phone, email, tax_rate, discount, ticket_period, remark]
