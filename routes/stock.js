@@ -238,7 +238,7 @@ router.post("/safe_list", async (req, res) => {
        SELECT 1 FROM jsonb_array_elements(stock_qty::jsonb) AS elem
        WHERE 
          elem ? 'safe_stock'
-         AND COALESCE(NULLIF(elem->>'quantity','')::numeric, 0)
+         AND COALESCE(NULLIF(elem->>'available_quantity','')::numeric, 0)
              < COALESCE(NULLIF(elem->>'safe_stock','')::numeric, 0)
       )
     `;
@@ -284,7 +284,7 @@ router.post("/safe_count", async (req, res) => {
       SELECT 1 FROM jsonb_array_elements(stock_qty::jsonb) AS elem
       WHERE 
         elem ? 'safe_stock' 
-        AND COALESCE(NULLIF(elem->>'quantity','')::numeric, 0) 
+        AND COALESCE(NULLIF(elem->>'available_quantity','')::numeric, 0) 
             < COALESCE(NULLIF(elem->>'safe_stock','')::numeric, 0)
     )
   `;

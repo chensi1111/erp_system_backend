@@ -20,6 +20,7 @@ const responseCodes = {
   "invalid_sale_price":"018",
   "invalid_transaction":"019",
   "invalid_color":"020",
+  "invalid_handing_fee":"021",
   "id_conflict": "101",
   "name_conflict": "102",
   "specification_conflict": "103",

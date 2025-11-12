@@ -99,6 +99,7 @@ router.post("/create", async (req, res) => {
     price,
     total_quantity,
     remark,
+    handing_fee
   } = req.body;
   if (
     !transaction ||
@@ -117,6 +118,10 @@ router.post("/create", async (req, res) => {
     logger.warn("錯誤的金額");
     return sendError(res, response.invalid_price, "錯誤的金額");
   }
+  if (handing_fee && (isNaN(handing_fee) || handing_fee < 0)) {
+    logger.warn("錯誤的手續費");
+    return sendError(res, response.invalid_handing_fee, "錯誤的手續費");
+  }
   if (remark && remark.length > 100) {
     logger.warn("備註長度超過限制");
     return sendError(res, response.invalid_remark, "備註長度超過限制");
@@ -130,7 +135,7 @@ router.post("/create", async (req, res) => {
   try {
     await client.query("BEGIN");
     await client.query(
-      "INSERT INTO sale (transaction, sale_id, product_id, create_date, product_name, specification,  price, size_list, quantities, total_quantity, remark) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10 ,$11)",
+      "INSERT INTO sale (transaction, sale_id, product_id, create_date, product_name, specification,  price, size_list, quantities, total_quantity, remark,handing_fee) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10 ,$11,$12)",
       [
         transaction,
         sale_id,
@@ -143,6 +148,7 @@ router.post("/create", async (req, res) => {
         JSON.stringify(quantities),
         total_quantity,
         remark,
+        handing_fee
       ]
     );
     const result = await client.query(
@@ -161,7 +167,7 @@ router.post("/create", async (req, res) => {
       let insufficientSizes = [];
       for (const soldItem of quantities) {
         const stockItem = currentStock.find((s) => s.size === soldItem.size);
-        const available = parseInt(stockItem?.quantity || "0", 10);
+        const available = parseInt(stockItem?.available_quantity || "0", 10);
         const soldQty = parseInt(soldItem.quantity || "0", 10);
         if (soldQty > available) {
           insufficientSizes.push({
@@ -187,12 +193,12 @@ router.post("/create", async (req, res) => {
       const updatedStock = currentStock.map((stockItem) => {
         const soldItem = quantities.find((q) => q.size === stockItem.size);
         const soldQty = parseInt(soldItem?.quantity || "0", 10);
-        const oldQty = parseInt(stockItem.quantity || "0", 10);
-        const newQty = Math.max(oldQty - soldQty, 0);
+        const oldQty = parseInt(stockItem.available_quantity || "0", 10);
+        const oldAllQty = parseInt(stockItem.all_quantity || "0", 10);
         return {
-          size: stockItem.size,
-          quantity: newQty.toString(),
-          safe_stock:stockItem.safe_stock
+          ...stockItem,
+          available_quantity: Math.max(oldQty - soldQty, 0),
+          all_quantity: Math.max(oldAllQty - soldQty, 0),
         };
       });
 
@@ -211,8 +217,8 @@ router.post("/create", async (req, res) => {
     }
     // 庫存紀錄
     await client.query(
-      `INSERT INTO stock_history (product_id, product_name, specification, quantities, create_date,change_number,change_type,total_quantity)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      `INSERT INTO stock_history (product_id, product_name, specification, quantities, create_date,change_number,change_type,total_quantity,price)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
       [
         product_id,
         product_name,
@@ -222,6 +228,7 @@ router.post("/create", async (req, res) => {
         sale_id,
         "銷貨",
         total_quantity,
+        price
       ]
     );
     await client.query("COMMIT");
@@ -273,7 +280,7 @@ router.post("/list", async (req, res) => {
     : "";
   try {
     const result = await db.query(
-      `SELECT sale_id, transaction
+      `SELECT sale_id, transaction, create_date
       FROM sale 
       ${whereClause} 
       ORDER BY sale_id ${sort} 
@@ -319,11 +326,13 @@ router.post("/delete", async (req, res) => {
     ]);
     const saleResult = await client.query(
       `SELECT s.product_id,s.product_name, s.specification, s.quantities,s.total_quantity as sale_total_quantity,
-      st.stock_qty, st.total_quantity as stock_total_quantity 
+      st.stock_qty, st.total_quantity as stock_total_quantity , sh.price
       FROM sale s
       JOIN stock st 
       ON s.product_id = st.product_id 
       AND s.specification = st.specification
+      LEFT JOIN stock_history sh
+      ON sh.change_number = r.sale_id
       WHERE s.sale_id = $1`,
       [sale_id]
     );
@@ -333,16 +342,16 @@ router.post("/delete", async (req, res) => {
       return sendError(res, response.not_found, "找不到記錄");
     }
     // 回補庫存
-    const { stock_qty, quantities,product_name, product_id, specification,sale_total_quantity,stock_total_quantity } = saleResult.rows[0];
+    const { stock_qty, quantities,product_name, product_id, specification,sale_total_quantity,stock_total_quantity,price } = saleResult.rows[0];
     const updatedStock = stock_qty.map((stockItem) => {
       const soldItem = quantities.find((q) => q.size === stockItem.size);
       const soldQty = parseInt(soldItem?.quantity || "0", 10);
-      const oldQty = parseInt(stockItem.quantity || "0", 10);
-      const newQty = oldQty + soldQty;
+      const oldQty = parseInt(stockItem.available_quantity || "0", 10);
+      const oldAllQty = parseInt(stockItem.all_quantity || "0", 10);
       return {
-        size: stockItem.size,
-        quantity: newQty.toString(),
-        safe_stock:stockItem.safe_stock
+         ...stockItem,
+         available_quantity: Math.max(oldQty - soldQty, 0),
+         all_quantity: Math.max(oldAllQty - soldQty, 0),
       };
     });
     const updateQuantity = sale_total_quantity + stock_total_quantity
@@ -354,8 +363,8 @@ router.post("/delete", async (req, res) => {
      // 庫存紀錄
     const changeKey = `${sale_id}-c`;
     await client.query(
-      `INSERT INTO stock_history (product_id, product_name, specification, quantities, create_date,change_number,change_type,total_quantity)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      `INSERT INTO stock_history (product_id, product_name, specification, quantities, create_date,change_number,change_type,total_quantity,price)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
       [
         product_id,
         product_name,
@@ -363,8 +372,9 @@ router.post("/delete", async (req, res) => {
         JSON.stringify(quantities),
         taipeiTime,
         changeKey,
-        "銷貨作廢",
+        "銷貨取消",
         sale_total_quantity,
+        price
       ]
     );
 
@@ -400,7 +410,8 @@ router.post("/detail", async (req, res) => {
         p.product_type1,
         p.product_type2,
         p.product_type3,
-        p.product_type4
+        p.product_type4,
+        p.average_cost
       FROM sale s
       JOIN product p ON s.specification = p.specification
       WHERE s.sale_id = $1
@@ -422,43 +433,5 @@ router.post("/detail", async (req, res) => {
     return sendError(res, response.server_error, "伺服器錯誤，請稍後再試", 500);
   }
 });
-// 修改
-// router.post("/update", async (req, res) => {
-//   let { sale_id,transaction,quantities,price, remark} = req.body;
-//     if(!sale_id ||!transaction||!quantities||!price){
-//       logger.warn("缺少必要資料")
-//       return sendError(res, response.missing_info, '缺少必要資料');
-//     }
-//     if(transaction!=='買斷' && transaction!=='寄賣'){
-//       logger.warn("錯誤的交易類型")
-//       return sendError(res, response.invalid_transaction,'錯誤的交易類型')
-//     }
-//     if((isNaN(price) || price < 0)){
-//       logger.warn("錯誤的金額")
-//       return sendError(res, response.invalid_price, '錯誤的金額');
-//     }
-//     if(remark && remark.length > 100){
-//       logger.warn("備註長度超過限制")
-//       return sendError(res, response.invalid_remark, '備註長度超過限制');
-//     }
-//     try {
-//     await db.query(
-//      `UPDATE restock SET transaction = $1, quantities = $2, price = $3,  remark = $4 WHERE sale_id = $5`,
-//      [
-//       transaction,
-//       quantities,
-//       price,
-//       remark,
-//       sale_id
-//     ]
-//     );
-//      res.status(200).json({
-//       code: response.success,
-//       msg: "修改成功",
-//     });
-//     } catch (error) {
-//       logger.error(error)
-//       return sendError(res, response.server_error, "伺服器錯誤，請稍後再試", 500);
-//     }
-// });
+
 module.exports = router;
