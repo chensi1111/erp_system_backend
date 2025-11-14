@@ -43,7 +43,8 @@ router.post("/list", async (req, res) => {
     const saleResult = await db.query(
       `
       SELECT
-        COALESCE(SUM(s.handing_fee), 0) AS total_fee, 
+        COALESCE(SUM(s.handing_fee), 0) AS total_fee,
+        SUM(CASE WHEN s.handing_fee > 0 THEN 1 ELSE 0 END) AS fee_count, 
         COALESCE(SUM(s.total_quantity), 0) AS total_sale_volume,
         COALESCE(SUM(s.total_quantity * s.price), 0) AS total_sale_amount,
         SUM(s.total_quantity * (s.price - COALESCE(p.average_cost, 0))) AS total_profit
@@ -121,7 +122,8 @@ router.post("/year", async (req, res) => {
     const saleResult = await db.query(
       `
       SELECT
-        COALESCE(SUM(s.handing_fee), 0) AS total_fee, 
+        COALESCE(SUM(s.handing_fee), 0) AS total_fee,
+        SUM(CASE WHEN s.handing_fee > 0 THEN 1 ELSE 0 END) AS fee_count,  
         COALESCE(SUM(s.total_quantity), 0) AS total_sale_volume,
         COALESCE(SUM(s.total_quantity * s.price), 0) AS total_sale_amount,
         SUM(s.total_quantity * (s.price - COALESCE(p.average_cost, 0))) AS total_profit
