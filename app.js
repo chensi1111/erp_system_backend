@@ -76,5 +76,5 @@ app.use('/api/order', orderRouter)
 app.use('/api/dashboard', dashboardRouter)
 
 app.listen(port, () => {
-  console.log(`Server running on port ${port} ${process.env.DATABASE_URL}`);
+  console.log(`Server running on port ${port}`);
 });

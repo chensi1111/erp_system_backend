@@ -57,6 +57,7 @@ router.post("/productInfo", async (req, res) => {
       p.product_type2,
       p.product_type3,
       p.product_type4,
+      p.purchase_price,
       s.size_list
      FROM product p
      LEFT JOIN manufactor m ON p.manufactor = m.manufactor_id
@@ -71,7 +72,6 @@ router.post("/productInfo", async (req, res) => {
      `,
       [specification]
     );
-
     res.status(200).json({
       code: response.success,
       msg: "獲取成功",
@@ -263,9 +263,13 @@ router.post("/list", async (req, res) => {
         conditions.push(`restock_id ILIKE $${paramIndex++}`);
         values.push(`%${filter.restock_id}%`);
       }
-      if (filter.transaction) {
-        conditions.push(`transaction ILIKE $${paramIndex++}`);
-        values.push(`%${filter.transaction}%`);
+      if (filter.product_id) {
+        conditions.push(`product_id ILIKE $${paramIndex++}`);
+        values.push(`%${filter.product_id}%`);
+      }
+      if (filter.specification) {
+        conditions.push(`specification ILIKE $${paramIndex++}`);
+        values.push(`%${filter.specification}%`);
       }
     }
     if (isToday) {
@@ -277,7 +281,7 @@ router.post("/list", async (req, res) => {
     const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   try {
     const result =  await db.query(
-      `SELECT restock_id, transaction, create_date
+      `SELECT restock_id, product_id, specification
       FROM restock 
       ${whereClause} 
       ORDER BY restock_id ${sort} 
