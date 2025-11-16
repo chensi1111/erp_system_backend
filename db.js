@@ -1,5 +1,9 @@
 const { Pool } = require('pg');
-require('dotenv').config();
+require('dotenv').config({
+  path: process.env.NODE_ENV === 'production'
+    ? '.env.production'
+    : '.env'
+});
 
 const url = new URL(process.env.DATABASE_URL);
 

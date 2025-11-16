@@ -332,7 +332,7 @@ router.post("/delete", async (req, res) => {
       ON s.product_id = st.product_id 
       AND s.specification = st.specification
       LEFT JOIN stock_history sh
-      ON sh.change_number = r.sale_id
+      ON sh.change_number = s.sale_id
       WHERE s.sale_id = $1`,
       [sale_id]
     );
