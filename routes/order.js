@@ -27,6 +27,8 @@ router.post("/create", async (req, res) => {
     remaining_price,
     total_quantity,
     remark,
+    date,
+    type
   } = req.body;
   if (
     !product_id ||
@@ -38,7 +40,9 @@ router.post("/create", async (req, res) => {
     !total_quantity ||
     !price ||
     !prepaid_price ||
-    !remaining_price
+    !remaining_price ||
+    !date ||
+    !type
   ) {
     logger.warn("缺少必要資料");
     return sendError(res, response.missing_info, "缺少必要資料");
@@ -68,11 +72,12 @@ router.post("/create", async (req, res) => {
   try {
     await client.query("BEGIN");
     await client.query(
-      "INSERT INTO orders ( order_id, product_id, create_date, product_name, specification,  price, prepaid_price, remaining_price, size_list, quantities, total_quantity, remark) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,$11,$12 )",
+      "INSERT INTO orders ( order_id, product_id, create_date,date, product_name, specification,  price, prepaid_price, remaining_price, size_list, quantities, total_quantity, remark) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,$11,$12,$13 )",
       [
         order_id,
         product_id,
         taipeiTime,
+        date,
         product_name,
         specification,
         price,
@@ -142,7 +147,7 @@ router.post("/create", async (req, res) => {
         [
           JSON.stringify(updatedStock),
           newTotal,
-          taipeiTime,
+          date,
           product_id,
           specification,
         ]
@@ -181,7 +186,7 @@ router.post("/create", async (req, res) => {
 });
 // 查詢列表
 router.post("/list", async (req, res) => {
-  const { page, pageSize, filter, sort, isToday } = req.body;
+  const { page, pageSize, filter, sort,showOneDay,selectedDate } = req.body;
   const offset = (page - 1) * pageSize;
   if (page < 1 || pageSize < 1) {
     logger.warn("錯誤的分頁資訊");
@@ -205,18 +210,24 @@ router.post("/list", async (req, res) => {
       values.push(`%${filter.product_id}%`);
     }
   }
-  if (isToday) {
-    const today = dayjs().format("YYYY-MM-DD");
-    conditions.push(`create_date::date = $${paramIndex++}`);
-    values.push(today);
-  }
+  if (showOneDay && selectedDate) {
+      conditions.push(`date >= $${paramIndex} AND date < $${paramIndex + 1}`);
+    
+      const start = dayjs.utc(selectedDate).startOf("day");
+      const end = start.add(1, "day");
+    
+      values.push(start.toISOString()); 
+      values.push(end.toISOString());
+    
+      paramIndex += 2;
+    }
 
   const whereClause = conditions.length
     ? `WHERE ${conditions.join(" AND ")}`
     : "";
   try {
     const result = await db.query(
-      `SELECT order_id, product_id,create_date
+      `SELECT order_id, product_id,create_date,date, specification, price,total_quantity,prepaid_price,quantities
       FROM orders 
       ${whereClause} 
       ORDER BY order_id ${sort} 
@@ -412,13 +423,15 @@ router.post("/complete", async (req, res) => {
     const randomPart = randomUUID().replace(/-/g, "").slice(0, 3).toUpperCase();
     const sale_id = `S${datePart}-${randomPart}`;
     const taipeiTime = dayjs().tz("Asia/Taipei").format("YYYY-MM-DD HH:mm:ss");
+    const taipeiDate = dayjs().tz("Asia/Taipei").format("YYYY-MM-DD");
     await client.query(
-      "INSERT INTO sale (transaction, sale_id, product_id, create_date, product_name, specification,  price, size_list, quantities, total_quantity, remark) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10 ,$11)",
+      "INSERT INTO sale (transaction, sale_id, product_id, create_date,date, product_name, specification,  price, size_list, quantities, total_quantity, remark) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10 ,$11,$12)",
       [
         '現場',
         sale_id,
         order.product_id,
         taipeiTime,
+        taipeiDate,
         order.product_name,
         order.specification,
         order.price,
@@ -486,7 +499,7 @@ router.post("/complete", async (req, res) => {
         [
           JSON.stringify(updatedStock),
           newTotal,
-          taipeiTime,
+          taipeiDate,
           order.product_id,
           order.specification,
         ]

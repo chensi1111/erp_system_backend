@@ -78,3 +78,10 @@ app.use('/api/dashboard', dashboardRouter)
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
 });
+// const server = app.listen(3000, () => {
+//   console.log("Server running on port 3000");
+// });
+
+// server.on('error', (err) => {
+//   console.error("Server failed to start:", err);
+// });

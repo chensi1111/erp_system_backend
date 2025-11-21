@@ -138,12 +138,12 @@ router.post("/create", async (req, res) => {
 
     try {
     const result = await db.query(
-      "SELECT specification FROM product WHERE specification = $1",
-      [specification]
+      "SELECT specification FROM product WHERE product_id = $1 AND specification = $2",
+      [product_id,specification]
     );
     if (result.rows.length > 0) {
-      logger.warn("商品規格已被使用");
-      return sendError(res, response.specification_conflict, "同一商品的商品規格已被使用");
+      logger.warn("商品已存在");
+      return sendError(res, response.specification_conflict, "商品已存在");
     }
     const taipeiTime = dayjs().tz('Asia/Taipei').format('YYYY-MM-DD HH:mm:ss');
     await db.query(
@@ -224,15 +224,15 @@ router.post("/list", async (req, res) => {
 })
 // 查詢詳細資料
 router.post("/detail", async (req, res) => {
-  const { specification } = req.body;
-  if(!specification){
+  const { specification,product_id } = req.body;
+  if(!specification || !product_id){
     logger.warn("缺少必要資料")
     return sendError(res, response.missing_info, '缺少必要資料');
   }
   try {
     const result =  await db.query(
-      "SELECT * FROM product WHERE specification = $1",
-      [specification]
+      "SELECT * FROM product WHERE specification = $1 AND product_id = $2",
+      [specification,product_id]
     );
     const product = result.rows[0];
     if(!product){

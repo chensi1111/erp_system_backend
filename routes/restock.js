@@ -14,14 +14,40 @@ function sendError(res, code, msg, status = 400) {
 }
 // 獲取商品規格選項
 router.post("/specification", async (req, res) => {
-  let { product_id } = req.body;
-  if (!product_id) {
+  let { specification } = req.body;
+  if (!specification) {
     logger.warn("缺少必要資料");
     return sendError(res, response.missing_info, "缺少必要資料");
   }
   try {
     const result = await db.query(
-      `SELECT specification from product WHERE product_id = $1`,[product_id]
+      `SELECT product_id from product WHERE specification = $1`,[specification]
+    )
+    if(!result.rows.length){
+      logger.warn("找不到商品資料");
+      return sendError(res, response.not_found, "找不到商品資料");
+    }
+    res.status(200).json({
+      code: response.success,
+      msg: "獲取成功",
+      data: result.rows,
+    });
+  } catch (error) {
+    logger.error(error);
+    return sendError(res, response.server_error, "伺服器錯誤，請稍後再試", 500);
+  }
+})
+// 獲取廠商的商品資料
+router.post("/productList", async (req, res) => {
+  let { manufactor } = req.body;
+  if (!manufactor) {
+    logger.warn("請先輸入廠商");
+    return sendError(res, response.missing_info, "請先輸入廠商");
+  }
+  try {
+    const result = await db.query(
+      // 去除重複值
+      `SELECT DISTINCT specification from product WHERE manufactor = $1`,[manufactor]
     )
     if(!result.rows.length){
       logger.warn("找不到商品資料");
@@ -39,8 +65,8 @@ router.post("/specification", async (req, res) => {
 })
 // 對應資料
 router.post("/productInfo", async (req, res) => {
-  let { specification } = req.body;
-  if (!specification) {
+  let { specification,product_id } = req.body;
+  if (!specification||!product_id) {
     logger.warn("缺少必要資料");
     return sendError(res, response.missing_info, "缺少必要資料");
   }
@@ -60,17 +86,10 @@ router.post("/productInfo", async (req, res) => {
       p.purchase_price,
       s.size_list
      FROM product p
-     LEFT JOIN manufactor m ON p.manufactor = m.manufactor_id
-     LEFT JOIN brand b ON p.brand = b.brand_id
      LEFT JOIN size s ON p.size = s.size_id
-     LEFT JOIN color c ON p.color = c.color_id
-     LEFT JOIN type t1 ON p.product_type1 = t1.type_id
-     LEFT JOIN type t2 ON p.product_type2 = t2.type_id
-     LEFT JOIN type t3 ON p.product_type3 = t3.type_id
-     LEFT JOIN type t4 ON p.product_type4 = t4.type_id
-     WHERE p.specification = $1
+     WHERE p.specification = $1 AND p.product_id = $2
      `,
-      [specification]
+      [specification,product_id]
     );
     res.status(200).json({
       code: response.success,
@@ -86,51 +105,19 @@ router.post("/productInfo", async (req, res) => {
 router.post("/create", async (req, res) => {
   let {
     transaction,
-    product_id,
-    specification,
-    product_name,
-    size_list,
-    quantities,
-    price,
-    total_quantity,
+    date,
+    manufactor,
     remark,
+    productList
   } = req.body;
   if (
     !transaction ||
-    !product_id ||
-    !specification ||
-    !product_name ||
-    !size_list ||
-    !quantities ||
-    !total_quantity ||
-    !price
+    !date ||
+    !manufactor ||
+    !productList 
   ) {
     logger.warn("缺少必要資料");
     return sendError(res, response.missing_info, "缺少必要資料");
-  }
-  if (!/^\d{1,20}$/.test(product_id)) {
-    logger.warn("編號格式錯誤");
-    return sendError(
-      res,
-      response.invalid_id,
-      "編號格式錯誤，必須為1~20位數字"
-    );
-  }
-  if (product_name.length > 20) {
-    logger.warn("商品名稱長度超過限制");
-    return sendError(res, response.invalid_name, "商品名稱長度超過限制");
-  }
-  if (specification.length > 20) {
-    logger.warn("商品規格長度超過限制");
-    return sendError(
-      res,
-      response.invalid_specification,
-      "商品規格長度超過限制"
-    );
-  }
-  if (isNaN(price) || price < 0) {
-    logger.warn("錯誤的金額");
-    return sendError(res, response.invalid_price, "錯誤的金額");
   }
   if (remark && remark.length > 100) {
     logger.warn("備註長度超過限制");
@@ -146,94 +133,137 @@ router.post("/create", async (req, res) => {
   try {
     await client.query('BEGIN');
     await client.query(
-      "INSERT INTO restock (transaction, restock_id, product_id, create_date, product_name, specification, price, remark,size_list,quantities,total_quantity) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+      "INSERT INTO restock (transaction, restock_id, date, create_date, manufactor, remark) VALUES ($1, $2, $3, $4, $5 ,$6)",
       [
         transaction,
         restock_id,
-        product_id,
+        date,
         taipeiTime,
-        product_name,
-        specification,
-        price,
-        remark,
-        size_list,
-        JSON.stringify(quantities),
-        total_quantity
+        manufactor,
+        remark
       ]
     );
-    // 查詢舊的進價
-    const costResult = await client.query(
-      `SELECT average_cost FROM product WHERE product_id = $1`,
-      [product_id]
-    );
-    const quantityResult = await client.query(
-      `SELECT total_quantity FROM stock WHERE product_id = $1`,
-      [product_id]
-    );
-    const currentAverageCost = Number(costResult.rows[0]?.average_cost) || 0;
-    const currentTotalQty = Number(quantityResult.rows[0]?.total_quantity) || 0;
-    // 平均進價
-    const newAverageCost = Math.round(
-      (currentAverageCost * currentTotalQty + price * total_quantity) /
-      (currentTotalQty + total_quantity)
-    );
-    // 更新商品進價
-    await client.query(
+     // *********** 逐一處理商品 ***********
+    for (const item of productList) {
+      const {
+        product_id,
+        specification,
+        quantities,
+        total_quantity,
+        price,
+        total_price,
+        product_name
+      } = item;
+
+      // 取得平均成本 oldCost * oldQty
+      const costResult = await client.query(
+        `SELECT average_cost FROM product WHERE product_id = $1 AND specification = $2`,
+        [product_id,specification]
+      );
+      const quantityResult = await client.query(
+        `SELECT total_quantity FROM stock WHERE product_id = $1 AND specification = $2`,
+        [product_id,specification]
+      );
+
+      const currentAverageCost = Number(costResult.rows[0]?.average_cost) || 0;
+      const currentTotalQty = Number(quantityResult.rows[0]?.total_quantity) || 0;
+
+      // 計算新的平均成本
+      const newAverageCost = Math.round(
+        (currentAverageCost * currentTotalQty + total_price) /
+        (currentTotalQty + total_quantity)
+      );
+
+      // 更新商品進價
+      await client.query(
         `UPDATE product
          SET last_cost = $1, average_cost = $2
-         WHERE product_id = $3`,
-        [price,newAverageCost,product_id]
-      ); 
-    const result = await client.query(
-      "SELECT product_id, specification,stock_qty,total_quantity FROM stock WHERE product_id = $1 AND specification = $2",
-      [product_id, specification]
-    );
-
-    if (result.rows.length === 0) {
-      // 不存在,新增庫存
-      await client.query(
-        `INSERT INTO stock (product_id, product_name, specification, stock_qty,total_quantity, last_in_date)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [product_id,product_name, specification, JSON.stringify(quantities),total_quantity, taipeiTime]
+         WHERE product_id = $3 AND specification = $4`,
+        [price, newAverageCost, product_id, specification]
       );
-  
-    } else {
-      // 已存在,更新庫存數量
-        const currentStock = result.rows[0].stock_qty;
-        const currentTotal = result.rows[0].total_quantity;
+
+      // ===== 更新庫存 =====
+      const stockResult = await client.query(
+        `SELECT product_id, specification, stock_qty, total_quantity
+         FROM stock 
+         WHERE product_id = $1 AND specification = $2`,
+        [product_id, specification]
+      );
+
+      if (stockResult.rows.length === 0) {
+        // 商品不存在 → 插入新庫存
+        await client.query(
+          `INSERT INTO stock (product_id, product_name, specification, stock_qty, total_quantity, last_in_date)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [
+            product_id,
+            product_name,
+            specification,
+            JSON.stringify(quantities),
+            total_quantity,
+            date
+          ]
+        );
+      } else {
+        // 已存在 → 更新庫存
+        const currentStock = stockResult.rows[0].stock_qty;
+        const currentTotal = stockResult.rows[0].total_quantity;
+
         const mergedTotal = currentTotal + total_quantity;
-        const mergedStock = currentStock.map(item => {
-          const newItem = quantities.find(q => q.size === item.size);
-          const addQty = parseInt(newItem?.all_quantity || "0", 10);
-          const oldAllQty = parseInt(item.all_quantity || "0", 10);
-          const reservedQty = parseInt(item.reserved_quantity || "0", 10);
+
+        const mergedStock = currentStock.map(itemOld => {
+          const newItem = quantities.find(q => q.size === itemOld.size);
+          const addQty = Number(newItem?.all_quantity || 0);
+          const oldAllQty = Number(itemOld.all_quantity || 0);
+          const reservedQty = Number(itemOld.reserved_quantity || 0);
+
           const newAllQty = oldAllQty + addQty;
           const newAvailableQty = newAllQty - reservedQty;
+
           return {
-            size: item.size,
+            ...itemOld,
             all_quantity: newAllQty.toString(),
-            available_quantity: newAvailableQty.toString(),
-            reserved_quantity: reservedQty.toString(),
-            safe_stock: item.safe_stock
+            available_quantity: newAvailableQty.toString()
           };
         });
+
+        await client.query(
+          `UPDATE stock
+           SET stock_qty = $1, total_quantity = $2, last_in_date = $3
+           WHERE product_id = $4 AND specification = $5`,
+          [
+            JSON.stringify(mergedStock),
+            mergedTotal,
+            taipeiTime,
+            product_id,
+            specification
+          ]
+        );
+      }
+
+      // ===== 新增庫存紀錄 =====
       await client.query(
-        `UPDATE stock
-         SET stock_qty = $1,total_quantity = $2 , last_in_date = $3
-         WHERE product_id = $4 AND specification = $5`,
-        [JSON.stringify(mergedStock),mergedTotal, taipeiTime, product_id, specification]
+        `INSERT INTO stock_history
+         (product_id, product_name, specification, quantities, create_date, change_number, change_type, total_quantity, price)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [
+          product_id,
+          product_name,
+          specification,
+          JSON.stringify(quantities),
+          taipeiTime,
+          restock_id,
+          "進貨",
+          total_quantity,
+          price
+        ]
       );
     }
-    // 庫存紀錄
-    await client.query(
-        `INSERT INTO stock_history (product_id, product_name, specification, quantities, create_date,change_number,change_type,total_quantity,price)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8,$9)`,
-        [product_id,product_name, specification, JSON.stringify(quantities), taipeiTime,restock_id,'進貨',total_quantity,price]
-      );
-    await client.query('COMMIT');
+
+    await client.query("COMMIT");
     res.status(200).json({
       code: response.success,
-      msg: "建立成功",
+      msg: "建立成功"
     });
   } catch (error) {
     logger.error(error);
@@ -245,7 +275,7 @@ router.post("/create", async (req, res) => {
 });
 // 查詢列表
 router.post("/list", async (req, res) => {
-  const { page, pageSize, filter,sort,isToday } = req.body;
+  const { page, pageSize, filter,sort,showOneDay,selectedDate } = req.body;
   const offset = (page - 1) * pageSize;
   if (page < 1 || pageSize < 1) {
     logger.warn("錯誤的分頁資訊")
@@ -263,30 +293,50 @@ router.post("/list", async (req, res) => {
         conditions.push(`restock_id ILIKE $${paramIndex++}`);
         values.push(`%${filter.restock_id}%`);
       }
-      if (filter.product_id) {
-        conditions.push(`product_id ILIKE $${paramIndex++}`);
-        values.push(`%${filter.product_id}%`);
-      }
-      if (filter.specification) {
-        conditions.push(`specification ILIKE $${paramIndex++}`);
-        values.push(`%${filter.specification}%`);
+      if (filter.manufactor) {
+        conditions.push(`manufactor ILIKE $${paramIndex++}`);
+        values.push(`%${filter.manufactor}%`);
       }
     }
-    if (isToday) {
-    const today = dayjs().format("YYYY-MM-DD");
-    conditions.push(`create_date::date = $${paramIndex++}`);
-    values.push(today);
-  }
+    if (showOneDay && selectedDate) {
+      conditions.push(`date >= $${paramIndex} AND date < $${paramIndex + 1}`);
+
+      const start = dayjs.utc(selectedDate).startOf("day");
+      const end = start.add(1, "day");
+
+      values.push(start.toISOString()); 
+      values.push(end.toISOString());
+
+      paramIndex += 2;
+    }
 
     const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   try {
-    const result =  await db.query(
-      `SELECT restock_id, product_id, specification
-      FROM restock 
-      ${whereClause} 
-      ORDER BY restock_id ${sort} 
-      LIMIT $${paramIndex++} OFFSET $${paramIndex++}`,
-      [...values,pageSize, offset]
+    const result = await db.query(
+      `
+      SELECT 
+       restock_id,
+       manufactor,
+       date,
+
+       (
+         SELECT COALESCE(SUM(total_quantity), 0)
+          FROM stock_history 
+          WHERE change_number = restock.restock_id
+        ) AS total_quantity,
+
+        (
+          SELECT COALESCE(SUM(total_quantity * price), 0)
+          FROM stock_history 
+          WHERE change_number = restock.restock_id
+       ) AS total_price
+
+    FROM restock
+     ${whereClause}
+     ORDER BY restock_id ${sort}
+     LIMIT $${paramIndex++} OFFSET $${paramIndex++}
+     `,
+     [...values, pageSize, offset]
     );
     const list = result.rows;
     // 查詢總筆數
@@ -295,6 +345,19 @@ router.post("/list", async (req, res) => {
       values
     );
     const total = totalResult.rows[0].total;
+    const summaryResult = await db.query(
+    `
+      SELECT
+        COALESCE(SUM(sh.total_quantity), 0) AS total_quantity_sum,
+        COALESCE(SUM(sh.total_quantity * sh.price), 0) AS total_price_sum
+      FROM stock_history sh
+      JOIN restock r ON sh.change_number = r.restock_id
+      ${whereClause}
+    `,
+    values
+  );
+
+    const summary = summaryResult.rows[0];
     res.status(201).json({
       code: response.success,
       msg: "查詢成功",
@@ -304,6 +367,8 @@ router.post("/list", async (req, res) => {
         page,
         pageSize,
         totalPages: Math.ceil(total / pageSize),
+        total_quantity_sum: summary.total_quantity_sum,
+        total_price_sum: summary.total_price_sum,
       }
     });
   } catch (error) {
@@ -314,80 +379,136 @@ router.post("/list", async (req, res) => {
 // 刪除
 router.post("/delete", async (req, res) => {
   const { restock_id } = req.body;
+
   if (!restock_id) {
     logger.warn("缺少必要資料");
     return sendError(res, response.missing_info, "缺少必要資料");
   }
+
   const client = await db.connect();
+
   try {
     await client.query("BEGIN");
-    await client.query(`UPDATE restock SET is_deleted = $1 WHERE restock_id = $2`, [
-      true,
-      restock_id,
-    ]);
-    const restockResult = await client.query(
-      `SELECT r.product_id,r.product_name, r.specification, r.quantities,r.total_quantity as restock_total_quantity,
-      st.stock_qty, st.total_quantity as stock_total_quantity ,sh.price
-      FROM restock r
-      JOIN stock st
-      ON r.product_id = st.product_id 
-      AND r.specification = st.specification
-      LEFT JOIN stock_history sh
-      ON sh.change_number = r.restock_id
-      WHERE r.restock_id = $1`,
+
+    // 標記 restock 為刪除
+    await client.query(
+      `UPDATE restock SET is_deleted = true WHERE restock_id = $1`,
       [restock_id]
     );
-    if (restockResult.rows.length === 0) {
-      await client.query("ROLLBACK");
-      logger.warn("找不到紀錄");
-      return sendError(res, response.not_found, "找不到記錄");
-    }
-    // 回扣庫存
-    const { stock_qty, quantities,product_name, product_id, specification,restock_total_quantity,stock_total_quantity,price } = restockResult.rows[0];
-    const updatedStock = stock_qty.map((stockItem) => {
-      const soldItem = quantities.find((q) => q.size === stockItem.size);
-      const soldQty = parseInt(soldItem?.quantity || "0", 10);
-      const oldAllQty = parseInt(stockItem.all_quantity || "0", 10);
-      const reservedQty = parseInt(stockItem.reserved_quantity || "0", 10);
-      // 回補總庫存
-      const newAllQty = oldAllQty + soldQty;
-      // 可售庫存 = 總庫存 - 已預留
-      const newAvailableQty = newAllQty - reservedQty;
-      return {
-        ...stockItem,
-        all_quantity: newAllQty.toString(),
-        available_quantity: newAvailableQty.toString(),
-      };
-    });
-    const updateQuantity =  stock_total_quantity - restock_total_quantity
-    const taipeiTime = dayjs().tz("Asia/Taipei").format("YYYY-MM-DD HH:mm:ss");
-    await client.query(
-      `UPDATE stock SET stock_qty = $1, total_quantity = $2 WHERE product_id = $3 AND specification = $4`,
-      [JSON.stringify(updatedStock),updateQuantity, product_id, specification]
+
+    // 查詢所有 stock_history 明細）
+    const historyRes = await client.query(
+      `SELECT 
+          product_id,
+          product_name,
+          specification,
+          quantities,
+          total_quantity,
+          price
+       FROM stock_history
+       WHERE change_number = $1
+       AND change_type = '進貨'`,
+      [restock_id]
     );
-     // 庫存紀錄
-    const changeKey = `${restock_id}-c`;
-    await client.query(
-      `INSERT INTO stock_history (product_id, product_name, specification, quantities, create_date,change_number,change_type,total_quantity,price)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-      [
+
+    if (historyRes.rows.length === 0) {
+      await client.query("ROLLBACK");
+      return sendError(res, response.not_found, "找不到進貨紀錄");
+    }
+
+    // 逐筆處理每個商品
+    for (const row of historyRes.rows) {
+      const {
         product_id,
         product_name,
         specification,
-        JSON.stringify(quantities),
-        taipeiTime,
-        changeKey,
-        "進貨取消",
-        restock_total_quantity,
+        quantities,
+        total_quantity,
         price
-      ]
-    );
+      } = row;
+
+      // 查詢該商品的庫存
+      const stockRes = await client.query(
+        `SELECT stock_qty, total_quantity
+         FROM stock
+         WHERE product_id = $1 AND specification = $2`,
+        [product_id, specification]
+      );
+
+      if (stockRes.rows.length === 0) {
+        throw new Error(`找不到庫存 product_id=${product_id}, spec=${specification}`);
+      }
+
+      const {
+        stock_qty,
+        total_quantity: stock_total_qty
+      } = stockRes.rows[0];
+
+      // 回補庫存 (依 size 回補)
+      console.log(stockRes.rows[0],'舊庫存')
+      const updatedStockQty = stock_qty.map((stockItem) => {
+        const soldItem = quantities.find((q) => q.size === stockItem.size);
+        const soldQty = parseInt(soldItem?.all_quantity || "0", 10);
+
+        const oldAll = parseInt(stockItem.all_quantity || "0", 10);
+        const oldAvailable = parseInt(stockItem.available_quantity || "0", 10);
+
+        const newAll = oldAll - soldQty;
+        const newAvailable = oldAvailable - soldQty;
+
+        return {
+          ...stockItem,
+          all_quantity: newAll.toString(),
+          available_quantity: newAvailable.toString(),
+        };
+      });
+
+      const newTotalQty = stock_total_qty - total_quantity;
+      console.log(updatedStockQty,newTotalQty,product_id,specification,'test')
+      // 更新庫存
+      await client.query(
+        `UPDATE stock 
+         SET stock_qty = $1,
+         total_quantity = $2
+         WHERE product_id = $3 AND specification = $4`,
+        [
+          JSON.stringify(updatedStockQty),
+          newTotalQty,
+          product_id,
+          specification
+        ]
+      );
+
+      // 寫入 stock_history（進貨取消）
+      const changeKey = `${restock_id}-c`;
+      const taipeiTime = dayjs().tz("Asia/Taipei").format("YYYY-MM-DD HH:mm:ss");
+
+      await client.query(
+        `INSERT INTO stock_history 
+         (product_id, product_name, specification, quantities, create_date,
+          change_number, change_type, total_quantity, price)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [
+          product_id,
+          product_name,
+          specification,
+          JSON.stringify(quantities),
+          taipeiTime,
+          changeKey,
+          "進貨取消",
+          total_quantity,
+          price
+        ]
+      );
+    }
 
     await client.query("COMMIT");
+
     res.status(200).json({
       code: response.success,
       msg: "刪除成功",
     });
+
   } catch (error) {
     logger.error(error);
     await client.query("ROLLBACK");
@@ -399,44 +520,42 @@ router.post("/delete", async (req, res) => {
 // 查詢詳細資料
 router.post("/detail", async (req, res) => {
   const { restock_id } = req.body;
-  if(!restock_id){
-    logger.warn("缺少必要資料")
-    return sendError(res, response.missing_info, '缺少必要資料');
-  }
+  if (!restock_id) return sendError(res, response.missing_info, '缺少必要資料');
+
   try {
-    const result = await db.query(
-      `
-      SELECT 
-        r.*,
-        p.manufactor,
-        p.brand,
-        p.size,
-        p.color,
-        p.product_type1,
-        p.product_type2,
-        p.product_type3,
-        p.product_type4
-      FROM restock r
-      JOIN product p ON r.specification = p.specification
-      WHERE r.restock_id = $1
-      `,
+    // restock 主資料
+    const restockInfo = await db.query(
+      `SELECT restock_id, manufactor, transaction, date, create_date, remark
+       FROM restock
+       WHERE restock_id = $1`,
       [restock_id]
     );
-    const restock = result.rows[0];
-    if(!restock){
-      logger.warn("查無此單")
+
+    if (restockInfo.rows.length === 0)
       return sendError(res, response.not_found, "查無此單");
-    }
+
+    // stock_history 多筆資料
+    const stockHistory = await db.query(
+      `SELECT product_id, specification, quantities, total_quantity, price
+       FROM stock_history
+       WHERE change_number = $1`,
+      [restock_id]
+    );
+
     res.status(200).json({
       code: response.success,
       msg: "查詢成功",
-      data: restock
+      data: {
+        restock: restockInfo.rows[0], 
+        items: stockHistory.rows       
+      }
     });
+
   } catch (error) {
-    logger.error(error)
+    logger.error(error);
     return sendError(res, response.server_error, "伺服器錯誤，請稍後再試", 500);
-  } 
-})
+  }
+});
 
 module.exports = router;
 

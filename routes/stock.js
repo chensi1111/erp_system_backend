@@ -184,15 +184,15 @@ router.post("/history", async (req, res) => {
 })
 // 查詢詳細資料
 router.post("/history_detail", async (req, res) => {
-  const { change_number } = req.body;
-  if(!change_number){
+  const { change_number,change_type } = req.body;
+  if(!change_number||!change_type){
     logger.warn("缺少必要資料")
     return sendError(res, response.missing_info, '缺少必要資料');
   }
   try {
     const result =  await db.query(
-      "SELECT * FROM stock_history WHERE change_number = $1",
-      [change_number]
+      "SELECT * FROM stock_history WHERE change_number = $1 AND change_type = $2",
+      [change_number,change_type]
     );
     const restock = result.rows[0];
     if(!restock){

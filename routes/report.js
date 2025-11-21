@@ -13,115 +13,162 @@ function sendError(res, code, msg, status = 400) {
 }
 // 查詢列表
 router.post("/list", async (req, res) => {
-  const { page, pageSize, filter, sort, rangeType ,customRange} = req.body;
+  const { page, pageSize, filter, sort, rangeType, customRange } = req.body;
   const offset = (page - 1) * pageSize;
+
   if (page < 1 || pageSize < 1) {
     logger.warn("錯誤的分頁資訊");
     return sendError(res, response.invalid_pageInfo, "錯誤的分頁資訊");
   }
-  const conditions = [];
+
+  const saleFilter = [];
+  const paymentFilter = [];
   const values = [];
   let paramIndex = 1;
-  conditions.push(`is_deleted = false`);
 
+  // --------------------------
+  // sale 篩選
   if (filter) {
-      // ILIKE不區分大小寫
-      // %value%部分相符比對
-      if (filter.product_id) {
-        conditions.push(`s.product_id ILIKE $${paramIndex++}`);
-        values.push(`%${filter.product_id}%`);
-      }
-      if (filter.specification) {
-        conditions.push(`s.specification ILIKE $${paramIndex++}`);
-        values.push(`%${filter.specification}%`);
-      }
-      if (filter.product_name) {
-        conditions.push(`s.product_name ILIKE $${paramIndex++}`);
-        values.push(`%${filter.product_name}%`);
-      }
+    if (filter.product_id) {
+      saleFilter.push(`s.product_id ILIKE $${paramIndex++}`);
+      values.push(`%${filter.product_id}%`);
     }
-  // 日期篩選
-  let dateCondition = "";
+    if (filter.specification) {
+      saleFilter.push(`s.specification ILIKE $${paramIndex++}`);
+      values.push(`%${filter.specification}%`);
+    }
+    if (filter.product_name) {
+      saleFilter.push(`s.product_name ILIKE $${paramIndex++}`);
+      values.push(`%${filter.product_name}%`);
+    }
+  }
+
+  // payment 日期篩選
   if (rangeType) {
     switch (rangeType) {
       case "today":
-        dateCondition = `s.create_date::date = CURRENT_DATE`;
+        paymentFilter.push(`pm.paid_at::date = CURRENT_DATE`);
         break;
       case "7days":
-        dateCondition = `s.create_date >= CURRENT_DATE - INTERVAL '7 days'`;
+        paymentFilter.push(`pm.paid_at >= CURRENT_DATE - INTERVAL '7 days'`);
         break;
       case "1month":
-        dateCondition = `s.create_date >= CURRENT_DATE - INTERVAL '1 month'`;
+        paymentFilter.push(`pm.paid_at >= CURRENT_DATE - INTERVAL '1 month'`);
         break;
       case "custom":
         if (customRange?.start && customRange?.end) {
-          dateCondition = `s.create_date BETWEEN $${paramIndex++} AND $${paramIndex++}`;
+          paymentFilter.push(`pm.paid_at BETWEEN $${paramIndex++} AND $${paramIndex++}`);
           values.push(customRange.start, customRange.end);
         }
         break;
     }
   }
 
-  if (dateCondition) {
-    conditions.push(dateCondition);
-  }
+  const saleWhere = saleFilter.length ? `AND ${saleFilter.join(" AND ")}` : "";
+  const paymentWhere = paymentFilter.length ? `AND ${paymentFilter.join(" AND ")}` : "";
 
-  const whereClause = conditions.length
-    ? `WHERE ${conditions.join(" AND ")}`
-    : "";
   try {
-     const result = await db.query(
+    // --------------------------
+    // 1️⃣ list 查詢
+    const listResult = await db.query(
       `
-      SELECT 
+      WITH payment_grouped AS (
+        SELECT
+          order_no,
+          SUM(CASE WHEN type='訂貨' THEN amount ELSE 0 END) AS prepaid_amount,
+          SUM(CASE WHEN type='收貨' THEN amount ELSE 0 END) AS remaining_amount,
+          SUM(CASE WHEN type='銷貨' THEN amount ELSE 0 END) AS paid_amount,
+          SUM(amount) AS total_amount
+        FROM payment pm
+        WHERE is_deleted = false
+        ${paymentWhere}
+        GROUP BY order_no
+      ),
+      sale_summary AS (
+        SELECT
           s.product_id,
           s.product_name,
           s.specification,
-          SUM(s.total_quantity) AS total_quantity,
-          SUM(s.total_quantity * s.price) AS total_sales,
-          SUM(s.total_quantity * (s.price - COALESCE(p.average_cost, 0))) AS total_profit
-      FROM sale s
-      LEFT JOIN product p ON s.specification = p.specification
-      ${whereClause}
-      GROUP BY s.product_id, s.product_name, s.specification
-      ORDER BY s.product_id ${sort}
-      LIMIT $${paramIndex++} OFFSET $${paramIndex++}
+          SUM(CASE WHEN s.status='訂貨' THEN s.total_quantity ELSE 0 END) AS order_quantity,
+          SUM(CASE WHEN s.status IN ('收貨','銷貨') THEN s.total_quantity ELSE 0 END) AS total_quantity,
+          SUM(CASE WHEN s.status IN ('收貨','銷貨') THEN s.total_quantity * p.average_cost ELSE 0 END) AS total_cost,
+          SUM(COALESCE(pg.prepaid_amount,0)) AS prepaid_amount,
+          SUM(COALESCE(pg.remaining_amount,0)) AS remaining_amount,
+          SUM(COALESCE(pg.paid_amount,0)) AS paid_amount,
+          SUM(COALESCE(pg.total_amount,0)) AS total_amount
+        FROM sale s
+        LEFT JOIN payment_grouped pg ON s.order_no = pg.order_no
+        JOIN product p ON s.product_id = p.product_id AND s.specification = p.specification
+        WHERE s.status != '取消'
+        ${saleWhere}
+        GROUP BY s.product_id, s.product_name, s.specification, p.average_cost
+      )
+      SELECT *
+      FROM sale_summary
+      ORDER BY product_id ${sort || "ASC"}
+      LIMIT $${paramIndex++} OFFSET $${paramIndex++};
       `,
       [...values, pageSize, offset]
     );
 
-    const list = result.rows;
-    // 查詢總筆數
+    const list = listResult.rows;
+
+    // --------------------------
+    // 2️⃣ 總筆數
     const countResult = await db.query(
       `
       SELECT COUNT(*) AS total
       FROM (
         SELECT 1
         FROM sale s
-        LEFT JOIN product p ON s.specification = p.specification
-        ${whereClause}
+        WHERE s.status != '取消'
+        ${saleWhere}
         GROUP BY s.product_id, s.product_name, s.specification
-      ) AS grouped
+      ) t;
       `,
       values
     );
     const total = countResult.rows[0].total;
 
+    // --------------------------
+    // 3️⃣ summary 統計
     const summaryResult = await db.query(
       `
-      SELECT 
-          COALESCE(SUM(s.handing_fee), 0) AS total_fee,
-          COALESCE(SUM(s.total_quantity), 0) AS total_sales_volume,
-          COALESCE(SUM(s.total_quantity * s.price), 0) AS total_sales_amount,
-          COALESCE(SUM(s.total_quantity * (COALESCE(p.average_cost, 0))), 0) AS total_cost,
-          COALESCE(SUM(s.total_quantity * (s.price - COALESCE(p.average_cost, 0))), 0) AS total_profit
+      WITH payment_grouped AS (
+        SELECT
+          order_no,
+          SUM(CASE WHEN type='訂貨' THEN amount ELSE 0 END) AS prepaid_amount,
+          SUM(CASE WHEN type='收貨' THEN amount ELSE 0 END) AS remaining_amount,
+          SUM(CASE WHEN type='銷貨' THEN amount ELSE 0 END) AS paid_amount
+        FROM payment pm
+        WHERE is_deleted = false
+        ${paymentWhere}
+        GROUP BY order_no
+      )
+      SELECT
+        COALESCE(SUM(CASE WHEN s.status='銷貨' THEN s.total_quantity ELSE 0 END),0) AS total_paid_quantity,
+        COALESCE(SUM(CASE WHEN s.status='訂貨' THEN s.total_quantity ELSE 0 END),0) AS total_order_quantity,
+        COALESCE(SUM(CASE WHEN s.status='收貨' THEN s.total_quantity ELSE 0 END),0) AS total_pickup_quantity,
+        COALESCE(SUM(pg.prepaid_amount),0) AS total_prepaid,
+        COALESCE(SUM(pg.remaining_amount),0) AS total_remaining,
+        COALESCE(SUM(pg.paid_amount),0) AS total_paid,
+        COALESCE(SUM(s.handing_fee),0) AS total_handing_fee,
+        COALESCE(SUM(CASE WHEN s.status IN ('收貨','銷貨') THEN s.total_quantity * p.average_cost ELSE 0 END),0) AS total_cost,
+        COALESCE(SUM(CASE WHEN s.status IN ('收貨','銷貨') THEN s.total_quantity * s.price ELSE 0 END),0)
+        -
+        COALESCE(SUM(CASE WHEN s.status IN ('收貨','銷貨') THEN s.total_quantity * p.average_cost ELSE 0 END),0) AS total_profit
       FROM sale s
-      LEFT JOIN product p ON s.specification = p.specification
-      ${whereClause}
+      LEFT JOIN payment_grouped pg ON s.order_no = pg.order_no
+      JOIN product p ON s.product_id = p.product_id AND s.specification = p.specification
+      WHERE s.status != '取消'
+      ${saleWhere};
       `,
       values
     );
+
     const summary = summaryResult.rows[0];
-    res.status(201).json({
+
+    res.status(200).json({
       code: response.success,
       msg: "查詢成功",
       data: {
@@ -138,6 +185,8 @@ router.post("/list", async (req, res) => {
     return sendError(res, response.server_error, "伺服器錯誤，請稍後再試", 500);
   }
 });
+
+
 // 查詢詳細
 router.post("/detail", async (req, res) => {
   const { specification, rangeType ,customRange} = req.body;
@@ -344,141 +393,164 @@ router.post("/rank_list", async (req, res) => {
 });
 // 查詢廠商進貨列表
 router.post("/restock_list", async (req, res) => {
-  const { page, pageSize, filter, sort, selectedDate} = req.body;
+  const { page, pageSize, filter, sort = "ASC", selectedDate } = req.body;
   const offset = (page - 1) * pageSize;
+
   if (page < 1 || pageSize < 1) {
-    logger.warn("錯誤的分頁資訊");
     return sendError(res, response.invalid_pageInfo, "錯誤的分頁資訊");
   }
-  const conditions = [];
-  const values = [];
-  let paramIndex = 1;
-  conditions.push(`r.is_deleted = false`);
 
-  if (filter) {
-      // ILIKE不區分大小寫
-      // %value%部分相符比對
-      if (filter.manufactor) {
-        conditions.push(`p.manufactor ILIKE $${paramIndex++}`);
-        values.push(`%${filter.manufactor}%`);
-      }
-      if (filter.manufactor_name) {
-        conditions.push(`m.manufactor_name ILIKE $${paramIndex++}`);
-        values.push(`%${filter.manufactor_name}%`);
-      }
-    }
-   if (selectedDate) {
+  const conditions = ["r.is_deleted = false"];
+  const values = [];
+  let idx = 1;
+
+  // 廠商搜尋
+  if (filter?.manufactor) {
+    conditions.push(`r.manufactor ILIKE $${idx++}`);
+    values.push(`%${filter.manufactor}%`);
+  }
+  // 月份搜尋
+  if (selectedDate) {
     const startDate = `${selectedDate}-01`;
     conditions.push(`
-      r.create_date >= $${paramIndex++}::date 
-      AND r.create_date < ($${paramIndex++}::date + interval '1 month')
+      r.date >= $${idx}::date 
+      AND r.date < ($${idx}::date + interval '1 month')
     `);
-    values.push(startDate, startDate);
+    values.push(startDate);
+    idx++;
   }
-  const whereClause = conditions.length
-    ? `WHERE ${conditions.join(" AND ")}`
-    : "";
+
+  const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
   try {
-     const result = await db.query(
+    const listResult = 
+      await db.query(
       `
       SELECT 
-          p.manufactor,
-          m.manufactor_name,
-          SUM(r.total_quantity) AS total_quantity,
-          SUM(r.total_quantity * r.price) AS total_restock
+        r.manufactor,
+        m.manufactor_name,
+        (
+          SELECT COALESCE(SUM(sh.total_quantity), 0)
+          FROM stock_history sh
+          WHERE sh.change_number IN (
+            SELECT restock_id FROM restock 
+            WHERE manufactor = r.manufactor
+              ${selectedDate ? `AND date >= $${idx - 1}::date AND date < ($${idx - 1}::date + interval '1 month')` : ""}
+          )
+        ) AS total_quantity,
+        (
+          SELECT COALESCE(SUM(sh.total_quantity * sh.price), 0)
+          FROM stock_history sh
+          WHERE sh.change_number IN (
+            SELECT restock_id FROM restock 
+            WHERE manufactor = r.manufactor
+              ${selectedDate ? `AND date >= $${idx - 1}::date AND date < ($${idx - 1}::date + interval '1 month')` : ""}
+          )
+        ) AS total_price
       FROM restock r
-      LEFT JOIN product p ON r.specification = p.specification
-      LEFT JOIN manufactor m ON p.manufactor = m.manufactor_id
+      LEFT JOIN manufactor m ON r.manufactor = m.manufactor_id
       ${whereClause}
-      GROUP BY p.manufactor,m.manufactor_name
-      ORDER BY p.manufactor ${sort}
-      LIMIT $${paramIndex++} OFFSET $${paramIndex++}
-      `,
+      GROUP BY r.manufactor, m.manufactor_name
+      ORDER BY r.manufactor ${sort}
+      LIMIT $${idx++} OFFSET $${idx++}
+    `,
       [...values, pageSize, offset]
-    );
+    )
+    const list =listResult.rows
 
-    const list = result.rows;
-    // 查詢總筆數
-    const countResult = await db.query(
+    // 總筆數
+    const totalResult = await db.query(
       `
       SELECT COUNT(*) AS total
       FROM (
-        SELECT 1
+        SELECT r.manufactor
         FROM restock r
-        LEFT JOIN product p ON r.specification = p.specification
         ${whereClause}
-        GROUP BY p.manufactor
-      ) AS grouped
+        GROUP BY r.manufactor
+      ) t
       `,
       values
     );
-    const total = countResult.rows[0].total;
+    const total = totalResult.rows[0].total;
 
+    // summary
     const summaryResult = await db.query(
       `
       SELECT 
-          COALESCE(SUM(r.total_quantity), 0) AS total_restock_volume,
-          COALESCE(SUM(r.total_quantity * r.price), 0) AS total_restock_amount
-      FROM restock r
-      LEFT JOIN product p ON r.specification = p.specification
-      ${whereClause}
+        COALESCE(SUM(sh.total_quantity), 0) AS total_restock_volume,
+        COALESCE(SUM(sh.total_quantity * sh.price), 0) AS total_restock_amount
+      FROM stock_history sh
+      WHERE sh.change_number IN (
+        SELECT restock_id FROM restock r
+        ${whereClause.replace("r.", "")} -- 移除 r. ，避免 from stock_history 沒 r
+      )
       `,
       values
     );
+
     const summary = summaryResult.rows[0];
+
     res.status(201).json({
       code: response.success,
       msg: "查詢成功",
-      data: {
-        list,
-        total,
-        summary,
-        page,
-        pageSize,
-        totalPages: Math.ceil(total / pageSize),
-      },
+      data: { list, total, summary, page, pageSize, totalPages: Math.ceil(total / pageSize) },
     });
-  } catch (error) {
-    logger.error(error);
-    return sendError(res, response.server_error, "伺服器錯誤，請稍後再試", 500);
+  } catch (err) {
+    logger.error(err);
+    return sendError(res, response.server_error, "伺服器錯誤，請稍後再試");
   }
 });
 // 查詢廠商進貨明細
 router.post("/restock_detail", async (req, res) => {
-  const { manufactor ,selectedDate} = req.body;
+  const { manufactor, selectedDate } = req.body;
   const conditions = [];
   const values = [];
   let paramIndex = 1;
-  conditions.push(`is_deleted = false`);
+
+  // 基本條件
+  conditions.push(`r.is_deleted = false`);
+
   if (selectedDate) {
     const startDate = `${selectedDate}-01`;
     conditions.push(`
-      r.create_date >= $${paramIndex++}::date 
-      AND r.create_date < ($${paramIndex++}::date + interval '1 month')
+      r.date >= $${paramIndex++}::date
+      AND r.date < ($${paramIndex++}::date + interval '1 month')
     `);
     values.push(startDate, startDate);
   }
 
   if (manufactor) {
-    conditions.push(`m.manufactor_id = $${paramIndex++}`);
+    conditions.push(`r.manufactor = $${paramIndex++}`);
     values.push(manufactor);
   }
 
   const whereClause = conditions.length
     ? `WHERE ${conditions.join(" AND ")}`
     : "";
+
   try {
-     const result = await db.query(
+    const result = await db.query(
       `
       SELECT 
-          r.restock_id,
-          r.create_date,
-          r.price,
-          r.total_quantity,
-          (r.total_quantity * r.price) AS total_price
+        r.restock_id,
+        r.create_date,
+        r.date,
+        r.manufactor,
+        m.manufactor_name,
+        -- 從 stock_history 計算總數量
+        (
+          SELECT COALESCE(SUM(sh.total_quantity), 0)
+          FROM stock_history sh
+          WHERE sh.change_number = r.restock_id
+        ) AS total_quantity,
+        -- 從 stock_history 計算總金額
+        (
+          SELECT COALESCE(SUM(sh.total_quantity * sh.price), 0)
+          FROM stock_history sh
+          WHERE sh.change_number = r.restock_id
+        ) AS total_price
       FROM restock r
-      LEFT JOIN product p ON r.specification = p.specification
-      LEFT JOIN manufactor m ON p.manufactor = m.manufactor_id
+      LEFT JOIN manufactor m ON r.manufactor = m.manufactor_id
       ${whereClause}
       ORDER BY r.create_date DESC
       `,
@@ -498,6 +570,7 @@ router.post("/restock_detail", async (req, res) => {
     return sendError(res, response.server_error, "伺服器錯誤，請稍後再試", 500);
   }
 });
+
 // 查詢廠商銷貨列表
 router.post("/sale_list", async (req, res) => {
   const { page, pageSize, filter, sort, selectedDate} = req.body;
