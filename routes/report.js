@@ -432,21 +432,47 @@ router.post("/restock_list", async (req, res) => {
         (
           SELECT COALESCE(SUM(sh.total_quantity), 0)
           FROM stock_history sh
-          WHERE sh.change_number IN (
+          WHERE sh.change_type = 10
+          AND sh.change_number IN (
             SELECT restock_id FROM restock 
             WHERE manufactor = r.manufactor
+            AND is_deleted = false
               ${selectedDate ? `AND date >= $${idx - 1}::date AND date < ($${idx - 1}::date + interval '1 month')` : ""}
           )
-        ) AS total_quantity,
+        ) AS total_in_quantity,
         (
           SELECT COALESCE(SUM(sh.total_quantity * sh.price), 0)
           FROM stock_history sh
-          WHERE sh.change_number IN (
+          WHERE sh.change_type = 10
+          AND sh.change_number IN (
             SELECT restock_id FROM restock 
             WHERE manufactor = r.manufactor
+            AND is_deleted = false
               ${selectedDate ? `AND date >= $${idx - 1}::date AND date < ($${idx - 1}::date + interval '1 month')` : ""}
           )
-        ) AS total_price
+        ) AS total_in_price,
+        (
+          SELECT COALESCE(SUM(sh.total_quantity), 0)
+          FROM stock_history sh
+          WHERE sh.change_type = 12
+          AND sh.change_number IN (
+            SELECT restock_id FROM restock 
+            WHERE manufactor = r.manufactor
+            AND is_deleted = false
+              ${selectedDate ? `AND date >= $${idx - 1}::date AND date < ($${idx - 1}::date + interval '1 month')` : ""}
+          )
+        ) AS total_return_quantity,
+        (
+          SELECT COALESCE(SUM(sh.total_quantity * sh.price), 0)
+          FROM stock_history sh
+          WHERE sh.change_type = 12
+          AND sh.change_number IN (
+            SELECT restock_id FROM restock 
+            WHERE manufactor = r.manufactor
+            AND is_deleted = false
+              ${selectedDate ? `AND date >= $${idx - 1}::date AND date < ($${idx - 1}::date + interval '1 month')` : ""}
+          )
+        ) AS total_return_price
       FROM restock r
       LEFT JOIN manufactor m ON r.manufactor = m.manufactor_id
       ${whereClause}
@@ -475,18 +501,54 @@ router.post("/restock_list", async (req, res) => {
 
     // summary
     const summaryResult = await db.query(
-      `
-      SELECT 
-        COALESCE(SUM(sh.total_quantity), 0) AS total_restock_volume,
-        COALESCE(SUM(sh.total_quantity * sh.price), 0) AS total_restock_amount
+  `
+  SELECT 
+    -- 全部進貨數量
+    (
+      SELECT COALESCE(SUM(sh.total_quantity), 0)
       FROM stock_history sh
-      WHERE sh.change_number IN (
-        SELECT restock_id FROM restock r
-        ${whereClause.replace("r.", "")} -- 移除 r. ，避免 from stock_history 沒 r
-      )
-      `,
-      values
-    );
+      WHERE sh.change_type = 10
+        AND sh.change_number IN (
+          SELECT restock_id FROM restock r
+          ${whereClause.replace("r.", "")}
+        )
+    ) AS total_in_quantity,
+
+    -- 全部進貨金額
+    (
+      SELECT COALESCE(SUM(sh.total_quantity * sh.price), 0)
+      FROM stock_history sh
+      WHERE sh.change_type = 10
+        AND sh.change_number IN (
+          SELECT restock_id FROM restock r
+          ${whereClause.replace("r.", "")}
+        )
+    ) AS total_in_price,
+
+    -- 全部退貨數量
+    (
+      SELECT COALESCE(SUM(sh.total_quantity), 0)
+      FROM stock_history sh
+      WHERE sh.change_type = 12
+        AND sh.change_number IN (
+          SELECT restock_id FROM restock r
+          ${whereClause.replace("r.", "")}
+        )
+    ) AS total_return_quantity,
+
+    -- 全部退貨金額
+    (
+      SELECT COALESCE(SUM(sh.total_quantity * sh.price), 0)
+      FROM stock_history sh
+      WHERE sh.change_type = 12
+        AND sh.change_number IN (
+          SELECT restock_id FROM restock r
+          ${whereClause.replace("r.", "")}
+        )
+    ) AS total_return_price
+  `,
+  values
+);
 
     const summary = summaryResult.rows[0];
 
@@ -537,18 +599,34 @@ router.post("/restock_detail", async (req, res) => {
         r.date,
         r.manufactor,
         m.manufactor_name,
-        -- 從 stock_history 計算總數量
+        -- 進貨總數量
         (
           SELECT COALESCE(SUM(sh.total_quantity), 0)
           FROM stock_history sh
           WHERE sh.change_number = r.restock_id
-        ) AS total_quantity,
-        -- 從 stock_history 計算總金額
+          AND sh.change_type = 10
+        ) AS total_in_quantity,
+        -- 進貨總金額
         (
           SELECT COALESCE(SUM(sh.total_quantity * sh.price), 0)
           FROM stock_history sh
           WHERE sh.change_number = r.restock_id
-        ) AS total_price
+          AND sh.change_type = 10
+        ) AS total_in_price,
+         -- 退貨總數量
+        (
+          SELECT COALESCE(SUM(sh.total_quantity), 0)
+          FROM stock_history sh
+          WHERE sh.change_number = r.restock_id
+          AND sh.change_type = 12
+        ) AS total_return_quantity,
+        -- 褪貨總金額
+        (
+          SELECT COALESCE(SUM(sh.total_quantity * sh.price), 0)
+          FROM stock_history sh
+          WHERE sh.change_number = r.restock_id
+          AND sh.change_type = 12
+        ) AS total_return_price
       FROM restock r
       LEFT JOIN manufactor m ON r.manufactor = m.manufactor_id
       ${whereClause}

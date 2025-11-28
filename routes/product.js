@@ -231,7 +231,10 @@ router.post("/detail", async (req, res) => {
   }
   try {
     const result =  await db.query(
-      "SELECT * FROM product WHERE specification = $1 AND product_id = $2",
+      `SELECT p.*,s.last_cost,s.cumulative_cost,s.total_quantity
+      FROM product p
+      LEFT JOIN stock s ON p.product_id = s.product_id AND p.specification = s.specification
+      WHERE p.specification = $1 AND p.product_id = $2`,
       [specification,product_id]
     );
     const product = result.rows[0];
