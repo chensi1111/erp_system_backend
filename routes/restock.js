@@ -297,7 +297,7 @@ router.post("/create", async (req, res) => {
 });
 // 查詢列表
 router.post("/list", async (req, res) => {
-  const { page, pageSize, filter,sort,showOneDay,selectedDate } = req.body;
+  const { page, pageSize, filter,sort,rangeType,customRange } = req.body;
   const offset = (page - 1) * pageSize;
   if (page < 1 || pageSize < 1) {
     logger.warn("錯誤的分頁資訊")
@@ -320,25 +320,23 @@ router.post("/list", async (req, res) => {
         values.push(`%${filter.manufactor}%`);
       }
     }
-    if (selectedDate) {
-      if (showOneDay) {
-        // 單日
-        const start = dayjs.utc(selectedDate).startOf("day");
-        const end = start.add(1, "day");
-
-        conditions.push(`date >= $${paramIndex} AND date < $${paramIndex + 1}`);
-        values.push(start.toISOString());
-        values.push(end.toISOString());
-        paramIndex += 2;
-      } else {
-        // 當月
-        const monthStart = dayjs.utc(selectedDate).startOf("month");
-        const monthEnd = monthStart.add(1, "month");
-
-        conditions.push(`date >= $${paramIndex} AND date < $${paramIndex + 1}`);
-        values.push(monthStart.toISOString());
-        values.push(monthEnd.toISOString());
-        paramIndex += 2;
+    if (rangeType) {
+      switch (rangeType) {
+        case "today":
+          conditions.push(`date::date = CURRENT_DATE`);
+          break;
+        case "7days":
+          conditions.push(`date >= CURRENT_DATE - INTERVAL '7 days'`);
+          break;
+        case "1month":
+          conditions.push(`date >= CURRENT_DATE - INTERVAL '1 month'`);
+          break;
+        case "custom":
+          if (customRange?.start && customRange?.end) {
+            conditions.push(`date BETWEEN $${paramIndex++} AND $${paramIndex++}`);
+            values.push(customRange.start, customRange.end);
+          }
+          break;
       }
     }
 
