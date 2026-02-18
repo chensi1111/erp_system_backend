@@ -91,7 +91,7 @@ router.post("/create", async (req, res) => {
       logger.warn("缺少必要資料")
       return sendError(res, response.missing_info, '缺少必要資料');
     }
-    if (!/^\d{1,20}$/.test(product_id)) {
+    if (!/^[A-Za-z0-9-]{1,20}$/.test(product_id)) {
       logger.warn("編號格式錯誤")
       return sendError(res, response.invalid_id, '編號格式錯誤，必須為1~20位數字');
     }
@@ -256,7 +256,7 @@ router.post("/update", async (req, res) => {
       logger.warn("缺少必要資料")
       return sendError(res, response.missing_info, '缺少必要資料');
     }
-    if (!/^\d{1,20}$/.test(product_id)) {
+    if (!/^[A-Za-z0-9-]{1,20}$/.test(product_id)) {
       logger.warn("編號格式錯誤")
       return sendError(res, response.invalid_id, '編號格式錯誤，必須為1~20位數字');
     }

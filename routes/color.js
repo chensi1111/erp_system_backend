@@ -20,9 +20,9 @@ router.post("/create", async (req, res) => {
       logger.warn("缺少必要資料")
       return sendError(res, response.missing_info, '缺少必要資料');
     }
-    if (!/^\d{1,5}$/.test(color_id)) {
+    if (!/^[A-Za-z0-9]{1,5}$/.test(color_id)) {
       logger.warn("編號格式錯誤")
-      return sendError(res, response.invalid_id, '編號格式錯誤，必須為1~5位數字');
+      return sendError(res, response.invalid_id, '編號格式錯誤，必須為1~5位英數字');
     }
     if(color_name.length > 20){
       logger.warn("顏色名稱長度超過限制")
