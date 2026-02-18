@@ -25,6 +25,8 @@ const responseCodes = {
   "name_conflict": "102",
   "specification_conflict": "103",
   "not_found": "201",
+  "not_enough": "202",
+  "not_allow":"203",
   "server_error": "500"
 }
 module.exports = responseCodes;

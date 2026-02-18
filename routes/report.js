@@ -11,7 +11,6 @@ dayjs.extend(timezone);
 function sendError(res, code, msg, status = 400) {
   return res.status(status).json({ code, msg });
 }
-// 查詢列表
 router.post("/list", async (req, res) => {
   const { page, pageSize, filter, sort, rangeType, customRange } = req.body;
   const offset = (page - 1) * pageSize;
@@ -21,202 +20,183 @@ router.post("/list", async (req, res) => {
     return sendError(res, response.invalid_pageInfo, "錯誤的分頁資訊");
   }
 
-  const saleFilter = [];
-  const paymentFilter = [];
-  const values = [];
-  let paramIndex = 1;
+  try {
+    const values = [];
+    let paramIndex = 1;
 
-  // --------------------------
-  // sale 篩選
-  if (filter) {
-    if (filter.product_id) {
-      saleFilter.push(`s.product_id ILIKE $${paramIndex++}`);
+    // --------------------------
+    // 組條件
+    const conditions = [`s.status != 5`]; // 排除取消
+
+    if (filter?.product_id) {
+      conditions.push(`s.product_id ILIKE $${paramIndex++}`);
       values.push(`%${filter.product_id}%`);
     }
-    if (filter.specification) {
-      saleFilter.push(`s.specification ILIKE $${paramIndex++}`);
+    if (filter?.specification) {
+      conditions.push(`s.specification ILIKE $${paramIndex++}`);
       values.push(`%${filter.specification}%`);
     }
-    if (filter.product_name) {
-      saleFilter.push(`s.product_name ILIKE $${paramIndex++}`);
+    if (filter?.product_name) {
+      conditions.push(`s.product_name ILIKE $${paramIndex++}`);
       values.push(`%${filter.product_name}%`);
     }
-  }
 
-  // payment 日期篩選
-  if (rangeType) {
-    switch (rangeType) {
-      case "today":
-        paymentFilter.push(`pm.paid_at::date = CURRENT_DATE`);
-        break;
-      case "7days":
-        paymentFilter.push(`pm.paid_at >= CURRENT_DATE - INTERVAL '7 days'`);
-        break;
-      case "1month":
-        paymentFilter.push(`pm.paid_at >= CURRENT_DATE - INTERVAL '1 month'`);
-        break;
-      case "custom":
-        if (customRange?.start && customRange?.end) {
-          paymentFilter.push(`pm.paid_at BETWEEN $${paramIndex++} AND $${paramIndex++}`);
-          values.push(customRange.start, customRange.end);
-        }
-        break;
+    // 日期篩選：依 payment.paid_date
+    if (rangeType) {
+      switch (rangeType) {
+        case "today":
+          conditions.push(`pm.paid_date::date = CURRENT_DATE`);
+          break;
+        case "7days":
+          conditions.push(`pm.paid_date >= CURRENT_DATE - INTERVAL '7 days'`);
+          break;
+        case "1month":
+          conditions.push(`pm.paid_date >= CURRENT_DATE - INTERVAL '1 month'`);
+          break;
+        case "custom":
+          if (customRange?.start && customRange?.end) {
+            conditions.push(`pm.paid_date BETWEEN $${paramIndex++} AND $${paramIndex++}`);
+            values.push(customRange.start, customRange.end);
+          }
+          break;
+      }
     }
-  }
 
-  const saleWhere = saleFilter.length ? `AND ${saleFilter.join(" AND ")}` : "";
-  const paymentWhere = paymentFilter.length ? `AND ${paymentFilter.join(" AND ")}` : "";
+    const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
-  try {
     // --------------------------
-    // 1️⃣ list 查詢
-    const listResult = await db.query(
-      `
-      WITH payment_grouped AS (
-        SELECT
-          order_no,
-          SUM(CASE WHEN type='訂貨' THEN amount ELSE 0 END) AS prepaid_amount,
-          SUM(CASE WHEN type='收貨' THEN amount ELSE 0 END) AS remaining_amount,
-          SUM(CASE WHEN type='銷貨' THEN amount ELSE 0 END) AS paid_amount,
-          SUM(amount) AS total_amount
-        FROM payment pm
-        WHERE is_deleted = false
-        ${paymentWhere}
-        GROUP BY order_no
-      ),
-      sale_summary AS (
-        SELECT
-          s.product_id,
-          s.product_name,
-          s.specification,
-          SUM(CASE WHEN s.status='訂貨' THEN s.total_quantity ELSE 0 END) AS order_quantity,
-          SUM(CASE WHEN s.status IN ('收貨','銷貨') THEN s.total_quantity ELSE 0 END) AS total_quantity,
-          SUM(CASE WHEN s.status IN ('收貨','銷貨') THEN s.total_quantity * p.average_cost ELSE 0 END) AS total_cost,
-          SUM(COALESCE(pg.prepaid_amount,0)) AS prepaid_amount,
-          SUM(COALESCE(pg.remaining_amount,0)) AS remaining_amount,
-          SUM(COALESCE(pg.paid_amount,0)) AS paid_amount,
-          SUM(COALESCE(pg.total_amount,0)) AS total_amount
-        FROM sale s
-        LEFT JOIN payment_grouped pg ON s.order_no = pg.order_no
-        JOIN product p ON s.product_id = p.product_id AND s.specification = p.specification
-        WHERE s.status != '取消'
-        ${saleWhere}
-        GROUP BY s.product_id, s.product_name, s.specification, p.average_cost
-      )
-      SELECT *
-      FROM sale_summary
-      ORDER BY product_id ${sort || "ASC"}
-      LIMIT $${paramIndex++} OFFSET $${paramIndex++};
-      `,
-      [...values, pageSize, offset]
-    );
+    // list 查詢
+    const listQuery = `
+      SELECT
+        s.product_id,
+        s.product_name,
+        s.specification,
+        st.cumulative_cost/st.cumulative_in_quantity as average_cost,
 
+        -- 數量
+        SUM(CASE WHEN s.status IN (0,3) THEN s.total_quantity ELSE 0 END) AS sale_quantity,
+        SUM(CASE WHEN s.status = 1 THEN s.total_quantity ELSE 0 END) AS refund_quantity,
+        SUM(CASE WHEN s.status = 2 THEN s.total_quantity ELSE 0 END) AS ordering_quantity,
+        SUM(CASE WHEN s.status = 4 THEN s.total_quantity ELSE 0 END) AS return_order_quantity,
+        -- 金額
+        SUM(CASE WHEN s.status IN (0,3) THEN s.total_quantity * price ELSE 0 END) AS sale_amount,
+        SUM(CASE WHEN s.status = 1 THEN s.total_quantity * price ELSE 0 END) AS refund_amount,
+        SUM(CASE WHEN s.status = 2 THEN pm.amount ELSE 0 END) AS ordering_amount,
+        SUM(CASE WHEN s.status = 4 THEN pm.amount ELSE 0 END) AS return_order_amount
+      FROM sale s
+      LEFT JOIN payment pm ON pm.order_no = s.order_no
+      LEFT JOIN stock st ON st.product_id = s.product_id AND st.specification = s.specification
+      ${whereClause}
+      GROUP BY s.product_id, s.product_name, s.specification, st.cumulative_cost, st.cumulative_in_quantity
+      ORDER BY s.product_id ${sort || "ASC"}
+      LIMIT $${paramIndex++} OFFSET $${paramIndex++}
+    `;
+
+    const listResult = await db.query(listQuery, [...values, pageSize, offset]);
     const list = listResult.rows;
 
-    // --------------------------
-    // 2️⃣ 總筆數
-    const countResult = await db.query(
-      `
-      SELECT COUNT(*) AS total
-      FROM (
-        SELECT 1
-        FROM sale s
-        WHERE s.status != '取消'
-        ${saleWhere}
-        GROUP BY s.product_id, s.product_name, s.specification
-      ) t;
-      `,
-      values
-    );
-    const total = countResult.rows[0].total;
 
-    // --------------------------
-    // 3️⃣ summary 統計
-    const summaryResult = await db.query(
-      `
-      WITH payment_grouped AS (
-        SELECT
-          order_no,
-          SUM(CASE WHEN type='訂貨' THEN amount ELSE 0 END) AS prepaid_amount,
-          SUM(CASE WHEN type='收貨' THEN amount ELSE 0 END) AS remaining_amount,
-          SUM(CASE WHEN type='銷貨' THEN amount ELSE 0 END) AS paid_amount
-        FROM payment pm
-        WHERE is_deleted = false
-        ${paymentWhere}
-        GROUP BY order_no
-      )
+     // --------------------------
+    // summary 查詢（加總同條件）
+    const summaryQuery = `
       SELECT
-        COALESCE(SUM(CASE WHEN s.status='銷貨' THEN s.total_quantity ELSE 0 END),0) AS total_paid_quantity,
-        COALESCE(SUM(CASE WHEN s.status='訂貨' THEN s.total_quantity ELSE 0 END),0) AS total_order_quantity,
-        COALESCE(SUM(CASE WHEN s.status='收貨' THEN s.total_quantity ELSE 0 END),0) AS total_pickup_quantity,
-        COALESCE(SUM(pg.prepaid_amount),0) AS total_prepaid,
-        COALESCE(SUM(pg.remaining_amount),0) AS total_remaining,
-        COALESCE(SUM(pg.paid_amount),0) AS total_paid,
-        COALESCE(SUM(s.handing_fee),0) AS total_handing_fee,
-        COALESCE(SUM(CASE WHEN s.status IN ('收貨','銷貨') THEN s.total_quantity * p.average_cost ELSE 0 END),0) AS total_cost,
-        COALESCE(SUM(CASE WHEN s.status IN ('收貨','銷貨') THEN s.total_quantity * s.price ELSE 0 END),0)
+        COALESCE(SUM(CASE WHEN s.status IN (0,3) THEN s.total_quantity ELSE 0 END), 0) AS sale_quantity,
+        COALESCE(SUM(CASE WHEN s.status = 1 THEN s.total_quantity ELSE 0 END), 0) AS refund_quantity,
+        COALESCE(SUM(CASE WHEN s.status = 2 THEN s.total_quantity ELSE 0 END), 0) AS ordering_quantity,
+        COALESCE(SUM(CASE WHEN s.status = 4 THEN s.total_quantity ELSE 0 END), 0) AS return_order_quantity,
+        -- 金額
+        COALESCE(SUM(CASE WHEN s.status IN (0,3) THEN s.total_quantity * price ELSE 0 END), 0) AS sale_amount,
+        COALESCE(SUM(CASE WHEN s.status = 1 THEN s.total_quantity * price ELSE 0 END), 0) AS refund_amount,
+        COALESCE(SUM(CASE WHEN s.status = 2 THEN pm.amount ELSE 0 END), 0) AS ordering_amount,
+        COALESCE(SUM(CASE WHEN s.status = 4 THEN pm.amount ELSE 0 END), 0) AS return_order_amount,
+        SUM(
+        (
+          (CASE WHEN s.status IN (0,3) THEN s.total_quantity * price ELSE 0 END)
+          - 
+          (CASE WHEN s.status = 1 THEN s.total_quantity * price ELSE 0 END)
+        )
         -
-        COALESCE(SUM(CASE WHEN s.status IN ('收貨','銷貨') THEN s.total_quantity * p.average_cost ELSE 0 END),0) AS total_profit
+        (
+          (
+            (CASE WHEN s.status IN (0,3) THEN s.total_quantity ELSE 0 END)
+            -
+            (CASE WHEN s.status = 1 THEN s.total_quantity ELSE 0 END)
+          )
+          * (st.cumulative_cost / NULLIF(st.cumulative_in_quantity,0))
+        )
+      ) AS gross_profit
       FROM sale s
-      LEFT JOIN payment_grouped pg ON s.order_no = pg.order_no
-      JOIN product p ON s.product_id = p.product_id AND s.specification = p.specification
-      WHERE s.status != '取消'
-      ${saleWhere};
-      `,
-      values
-    );
+      LEFT JOIN payment pm ON pm.order_no = s.order_no
+      LEFT JOIN stock st ON st.product_id = s.product_id AND st.specification = s.specification
+      ${whereClause}
+    `;
 
+    const summaryResult = await db.query(summaryQuery, values);
     const summary = summaryResult.rows[0];
 
+    // --------------------------
+
+    const countQuery =`
+     SELECT COUNT(*) AS total
+      FROM (
+        SELECT 1
+         FROM sale s
+         LEFT JOIN payment pm ON s.order_no = pm.order_no
+          ${whereClause}
+          GROUP BY s.product_id, s.product_name, s.specification ) t`
+        ; 
+    const countResult = await db.query(countQuery, values);
+    const total = Number(countResult.rows[0].total);
+
+
+    // --------------------------
     res.status(200).json({
       code: response.success,
       msg: "查詢成功",
       data: {
         list,
-        total,
-        summary,
         page,
         pageSize,
-        totalPages: Math.ceil(total / pageSize),
+        total,
+        summary
       },
     });
+
   } catch (error) {
     logger.error(error);
     return sendError(res, response.server_error, "伺服器錯誤，請稍後再試", 500);
   }
 });
-
-
 // 查詢詳細
 router.post("/detail", async (req, res) => {
   const { specification, rangeType ,customRange} = req.body;
   const conditions = [];
   const values = [];
   let paramIndex = 1;
-  conditions.push(`is_deleted = false`);
+  conditions.push(`s.status != 5`);
 
   // 日期篩選
   let dateCondition = "";
   if (rangeType) {
     switch (rangeType) {
       case "today":
-        dateCondition = `s.create_date::date = CURRENT_DATE`;
+        dateCondition = `pm.paid_date::date = CURRENT_DATE`;
         break;
       case "thisWeek":
         dateCondition = `
-        s.create_date >= date_trunc('week', CURRENT_DATE)
-        AND s.create_date < date_trunc('week', CURRENT_DATE) + INTERVAL '1 week'
+        pm.paid_date >= date_trunc('week', CURRENT_DATE)
+        AND pm.paid_date < date_trunc('week', CURRENT_DATE) + INTERVAL '1 week'
         `;
         break;
       case "thisMonth":
         dateCondition = `
-        s.create_date >= date_trunc('month', CURRENT_DATE)
-        AND s.create_date < date_trunc('month', CURRENT_DATE) + INTERVAL '1 month'
+        pm.paid_date >= date_trunc('month', CURRENT_DATE)
+        AND pm.paid_date < date_trunc('month', CURRENT_DATE) + INTERVAL '1 month'
         `;
         break;
       case "custom":
         if (customRange?.start && customRange?.end) {
-          dateCondition = `s.create_date BETWEEN $${paramIndex++} AND $${paramIndex++}`;
+          dateCondition = `pm.paid_date BETWEEN $${paramIndex++} AND $${paramIndex++}`;
           values.push(customRange.start, customRange.end);
         }
         break;
@@ -250,54 +230,54 @@ router.post("/detail", async (req, res) => {
           p.product_type3,
           p.product_type4,
           s.size_list,
-          SUM(s.handing_fee) AS handing_fee,
-          SUM(s.total_quantity) AS total_quantity,
-          SUM(s.total_quantity * s.price) AS total_sales,
-          SUM(s.total_quantity * p.average_cost) AS total_cost,
-          SUM(s.total_quantity * (s.price - COALESCE(p.average_cost, 0))) AS total_profit
+          SUM(CASE WHEN s.status IN (0,3) THEN s.total_quantity ELSE 0 END) AS sale_quantity,
+          SUM(CASE WHEN s.status = 1 THEN s.total_quantity ELSE 0 END) AS refund_quantity,
+          SUM(CASE WHEN s.status = 2 THEN s.total_quantity ELSE 0 END) AS ordering_quantity,
+          SUM(CASE WHEN s.status = 4 THEN s.total_quantity ELSE 0 END) AS return_order_quantity,
+          SUM(CASE WHEN s.status IN (0,3) THEN (s.total_quantity * s.price) ELSE 0 END) AS sale_amount,
+          SUM(CASE WHEN s.status = 1 THEN (s.total_quantity * s.price) ELSE 0 END) AS refund_amount,
+          SUM(CASE WHEN s.status = 2 THEN pm.amount ELSE 0 END) AS ordering_amount,
+          SUM(CASE WHEN s.status = 4 THEN pm.amount ELSE 0 END) AS return_order_amount,
+          (st.cumulative_cost / NULLIF(st.cumulative_in_quantity,0)) AS average_cost
+
       FROM sale s
-      LEFT JOIN product p ON s.specification = p.specification
+      LEFT JOIN product p 
+          ON s.specification = p.specification AND s.product_id = p.product_id
+      LEFT JOIN stock st
+          ON s.specification = st.specification
+      -- 子查詢過濾 payment，避免一筆 sale 重複 JOIN
+      JOIN (
+          SELECT DISTINCT ON (order_no) *
+          FROM payment
+          WHERE is_deleted = false
+          ORDER BY order_no, paid_date DESC
+      ) pm ON s.order_no = pm.order_no
       ${whereClause}
       GROUP BY 
-      s.product_id,
-      s.product_name,
-      s.specification,
-      p.manufactor,
-      p.brand,
-      p.size,
-      p.color,
-      p.product_type1,
-      p.product_type2,
-      p.product_type3,
-      p.product_type4,
-      s.size_list
+          s.product_id,
+          s.product_name,
+          s.specification,
+          p.manufactor,
+          p.brand,
+          p.size,
+          p.color,
+          p.product_type1,
+          p.product_type2,
+          p.product_type3,
+          p.product_type4,
+          s.size_list,
+          st.cumulative_cost,
+          st.cumulative_in_quantity
       `,
       [...values]
     );
-    const sizeResult = await db.query(
-    `
-      SELECT 
-        (elem->>'size') AS size,
-        SUM(COALESCE(NULLIF(elem->>'quantity', '')::int, 0)) AS total_quantity
-      FROM sale s,
-      LATERAL jsonb_array_elements(s.quantities::jsonb) AS elem
-      ${whereClause}
-      GROUP BY (elem->>'size')
-      ORDER BY (elem->>'size')::numeric
-    `,
-    [...values]
-    );
 
     const summary = result.rows[0];
-    const sizes = sizeResult.rows
     res.status(201).json({
       code: response.success,
       msg: "查詢成功",
       data: {
-        list:{
-            ...summary,
-            sizes
-        }
+        list:summary
       },
     });
   } catch (error) {
@@ -306,49 +286,71 @@ router.post("/detail", async (req, res) => {
   }
 });
 // 查詢排名
-router.post("/rank_list", async (req, res) => {
-  const { rangeType ,customRange} = req.body;
+router.post("/top_list", async (req, res) => {
+  const { filter, rangeType, customRange } = req.body;
 
-  const conditions = [];
-  const values = [];
-  let paramIndex = 1;
-  conditions.push(`is_deleted = false`);
-
-  // 日期篩選
-  let dateCondition = "";
-  if (rangeType) {
-    switch (rangeType) {
-      case "today":
-        dateCondition = `s.create_date::date = CURRENT_DATE`;
-        break;
-      case "7days":
-        dateCondition = `s.create_date >= CURRENT_DATE - INTERVAL '7 days'`;
-        break;
-      case "1month":
-        dateCondition = `s.create_date >= CURRENT_DATE - INTERVAL '1 month'`;
-        break;
-      case "custom":
-        if (customRange?.start && customRange?.end) {
-          dateCondition = `s.create_date BETWEEN $${paramIndex++} AND $${paramIndex++}`;
-          values.push(customRange.start, customRange.end);
-        }
-        break;
-    }
-  }
-
-  if (dateCondition) {
-    conditions.push(dateCondition);
-  }
-
-  const whereClause = conditions.length
-    ? `WHERE ${conditions.join(" AND ")}`
-    : "";
   try {
-    const result = await db.query(
-      `
-      SELECT 
+    const values = [];
+    let paramIndex = 1;
+
+    // --------------------------
+    // 組條件
+    const conditions = [`s.status != 5`]; // 排除取消
+
+    if (filter?.product_id) {
+      conditions.push(`s.product_id ILIKE $${paramIndex++}`);
+      values.push(`%${filter.product_id}%`);
+    }
+    if (filter?.specification) {
+      conditions.push(`s.specification ILIKE $${paramIndex++}`);
+      values.push(`%${filter.specification}%`);
+    }
+    if (filter?.product_name) {
+      conditions.push(`s.product_name ILIKE $${paramIndex++}`);
+      values.push(`%${filter.product_name}%`);
+    }
+
+    // 日期篩選：依 payment.paid_date
+    if (rangeType) {
+      switch (rangeType) {
+        case "today":
+          conditions.push(`pg.first_paid_date::date = CURRENT_DATE`);
+          break;
+        case "7days":
+          conditions.push(`pg.first_paid_date >= CURRENT_DATE - INTERVAL '7 days'`);
+          break;
+        case "1month":
+          conditions.push(`pg.first_paid_date >= CURRENT_DATE - INTERVAL '1 month'`);
+          break;
+        case "custom":
+          if (customRange?.start && customRange?.end) {
+            conditions.push(`pg.first_paid_date BETWEEN $${paramIndex++} AND $${paramIndex++}`);
+            values.push(customRange.start, customRange.end);
+          }
+          break;
+      }
+    }
+
+    const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    // --------------------------
+    // Top 10 查詢
+    const topQuery = `
+      WITH payment_grouped AS (
+        SELECT
+          order_no,
+          MIN(paid_date) AS first_paid_date,
+          SUM(CASE WHEN type = 0 THEN amount ELSE 0 END) AS sale_amount,
+          SUM(CASE WHEN type = 1 THEN amount ELSE 0 END) AS refund_amount,
+          SUM(CASE WHEN type = 2 THEN amount ELSE 0 END) AS order_amount,
+          SUM(CASE WHEN type = 3 THEN amount ELSE 0 END) AS pickup_amount,
+          SUM(CASE WHEN type = 4 THEN amount ELSE 0 END) AS return_order_amount
+        FROM payment
+        WHERE is_deleted = false
+        GROUP BY order_no
+      )
+      SELECT
         s.product_id,
-        s.product_name,
         s.specification,
         p.brand,
         p.color,
@@ -356,41 +358,54 @@ router.post("/rank_list", async (req, res) => {
         p.product_type2,
         p.product_type3,
         p.product_type4,
-        SUM(s.total_quantity) AS total_quantity,
-        SUM(s.total_quantity * s.price) AS total_sales,
-        SUM(s.total_quantity * (s.price - COALESCE(p.average_cost, 0))) AS total_profit
-      FROM sale s
-      LEFT JOIN product p ON s.specification = p.specification
-      ${whereClause}
-      GROUP BY 
-      s.product_id,
-      s.product_name,
-      s.specification,
-      p.brand,
-      p.color,
-      p.product_type1,
-      p.product_type2,
-      p.product_type3,
-      p.product_type4
-      ORDER BY SUM(s.total_quantity) DESC
-      LIMIT 10
-      `,
-      values
-    );
+        st.cumulative_cost/st.cumulative_in_quantity AS average_cost,
 
-    const list = result.rows;
-    res.status(201).json({
+        -- 數量
+        SUM(CASE WHEN s.status IN (0,3) THEN s.total_quantity ELSE 0 END) AS sale_quantity,
+        SUM(CASE WHEN s.status = 1 THEN s.total_quantity ELSE 0 END) AS refund_quantity,
+        SUM(CASE WHEN s.status = 2 THEN s.total_quantity ELSE 0 END) AS ordering_quantity,
+        SUM(CASE WHEN s.status = 4 THEN s.total_quantity ELSE 0 END) AS return_order_quantity,
+
+        -- 金額
+        SUM(
+          CASE 
+            WHEN s.status IN (0,3) THEN pg.sale_amount + pg.pickup_amount + pg.order_amount
+            ELSE 0
+          END
+        ) AS sale_amount,
+        SUM(pg.refund_amount) AS refund_amount,
+        SUM(CASE WHEN s.status = 2 THEN pg.order_amount ELSE 0 END) AS order_amount,
+        SUM(pg.return_order_amount) AS return_order_amount
+
+      FROM sale s
+      LEFT JOIN payment_grouped pg ON pg.order_no = s.order_no
+      LEFT JOIN product p ON s.specification = p.specification AND s.product_id = p.product_id
+      LEFT JOIN stock st ON st.product_id = s.product_id AND st.specification = s.specification
+      ${whereClause}
+      GROUP BY s.product_id, s.specification,p.brand,p.color,p.product_type1,p.product_type2,p.product_type3,p.product_type4, st.cumulative_cost, st.cumulative_in_quantity
+      ORDER BY 
+      sale_quantity DESC NULLS LAST,
+      sale_amount DESC NULLS LAST
+      LIMIT 10
+    `;
+
+    const topResult = await db.query(topQuery, values);
+    const topList = topResult.rows;
+
+    res.status(200).json({
       code: response.success,
       msg: "查詢成功",
       data: {
-        list
-      },
+        list: topList
+      }
     });
+
   } catch (error) {
     logger.error(error);
     return sendError(res, response.server_error, "伺服器錯誤，請稍後再試", 500);
   }
 });
+
 // 查詢廠商進貨列表
 router.post("/restock_list", async (req, res) => {
   const { page, pageSize, filter, sort = "ASC", selectedDate } = req.body;
@@ -432,21 +447,47 @@ router.post("/restock_list", async (req, res) => {
         (
           SELECT COALESCE(SUM(sh.total_quantity), 0)
           FROM stock_history sh
-          WHERE sh.change_number IN (
+          WHERE sh.change_type = 10
+          AND sh.change_number IN (
             SELECT restock_id FROM restock 
             WHERE manufactor = r.manufactor
+            AND is_deleted = false
               ${selectedDate ? `AND date >= $${idx - 1}::date AND date < ($${idx - 1}::date + interval '1 month')` : ""}
           )
-        ) AS total_quantity,
+        ) AS total_in_quantity,
         (
           SELECT COALESCE(SUM(sh.total_quantity * sh.price), 0)
           FROM stock_history sh
-          WHERE sh.change_number IN (
+          WHERE sh.change_type = 10
+          AND sh.change_number IN (
             SELECT restock_id FROM restock 
             WHERE manufactor = r.manufactor
+            AND is_deleted = false
               ${selectedDate ? `AND date >= $${idx - 1}::date AND date < ($${idx - 1}::date + interval '1 month')` : ""}
           )
-        ) AS total_price
+        ) AS total_in_price,
+        (
+          SELECT COALESCE(SUM(sh.total_quantity), 0)
+          FROM stock_history sh
+          WHERE sh.change_type = 12
+          AND sh.change_number IN (
+            SELECT restock_id FROM restock 
+            WHERE manufactor = r.manufactor
+            AND is_deleted = false
+              ${selectedDate ? `AND date >= $${idx - 1}::date AND date < ($${idx - 1}::date + interval '1 month')` : ""}
+          )
+        ) AS total_return_quantity,
+        (
+          SELECT COALESCE(SUM(sh.total_quantity * sh.price), 0)
+          FROM stock_history sh
+          WHERE sh.change_type = 12
+          AND sh.change_number IN (
+            SELECT restock_id FROM restock 
+            WHERE manufactor = r.manufactor
+            AND is_deleted = false
+              ${selectedDate ? `AND date >= $${idx - 1}::date AND date < ($${idx - 1}::date + interval '1 month')` : ""}
+          )
+        ) AS total_return_price
       FROM restock r
       LEFT JOIN manufactor m ON r.manufactor = m.manufactor_id
       ${whereClause}
@@ -475,18 +516,54 @@ router.post("/restock_list", async (req, res) => {
 
     // summary
     const summaryResult = await db.query(
-      `
-      SELECT 
-        COALESCE(SUM(sh.total_quantity), 0) AS total_restock_volume,
-        COALESCE(SUM(sh.total_quantity * sh.price), 0) AS total_restock_amount
+  `
+  SELECT 
+    -- 全部進貨數量
+    (
+      SELECT COALESCE(SUM(sh.total_quantity), 0)
       FROM stock_history sh
-      WHERE sh.change_number IN (
-        SELECT restock_id FROM restock r
-        ${whereClause.replace("r.", "")} -- 移除 r. ，避免 from stock_history 沒 r
-      )
-      `,
-      values
-    );
+      WHERE sh.change_type = 10
+        AND sh.change_number IN (
+          SELECT restock_id FROM restock r
+          ${whereClause.replace("r.", "")}
+        )
+    ) AS total_in_quantity,
+
+    -- 全部進貨金額
+    (
+      SELECT COALESCE(SUM(sh.total_quantity * sh.price), 0)
+      FROM stock_history sh
+      WHERE sh.change_type = 10
+        AND sh.change_number IN (
+          SELECT restock_id FROM restock r
+          ${whereClause.replace("r.", "")}
+        )
+    ) AS total_in_price,
+
+    -- 全部退貨數量
+    (
+      SELECT COALESCE(SUM(sh.total_quantity), 0)
+      FROM stock_history sh
+      WHERE sh.change_type = 12
+        AND sh.change_number IN (
+          SELECT restock_id FROM restock r
+          ${whereClause.replace("r.", "")}
+        )
+    ) AS total_return_quantity,
+
+    -- 全部退貨金額
+    (
+      SELECT COALESCE(SUM(sh.total_quantity * sh.price), 0)
+      FROM stock_history sh
+      WHERE sh.change_type = 12
+        AND sh.change_number IN (
+          SELECT restock_id FROM restock r
+          ${whereClause.replace("r.", "")}
+        )
+    ) AS total_return_price
+  `,
+  values
+);
 
     const summary = summaryResult.rows[0];
 
@@ -502,7 +579,14 @@ router.post("/restock_list", async (req, res) => {
 });
 // 查詢廠商進貨明細
 router.post("/restock_detail", async (req, res) => {
-  const { manufactor, selectedDate } = req.body;
+  const { manufactor, selectedDate, page = 1, pageSize = 10 } = req.body;
+
+  if (page < 1 || pageSize < 1) {
+    logger.warn("錯誤的分頁資訊");
+    return sendError(res, response.invalid_pageInfo, "錯誤的分頁資訊");
+  }
+
+  const offset = (page - 1) * pageSize;
   const conditions = [];
   const values = [];
   let paramIndex = 1;
@@ -537,32 +621,71 @@ router.post("/restock_detail", async (req, res) => {
         r.date,
         r.manufactor,
         m.manufactor_name,
-        -- 從 stock_history 計算總數量
+
+        -- 進貨總數量
         (
           SELECT COALESCE(SUM(sh.total_quantity), 0)
           FROM stock_history sh
           WHERE sh.change_number = r.restock_id
-        ) AS total_quantity,
-        -- 從 stock_history 計算總金額
+          AND sh.change_type = 10
+        ) AS total_in_quantity,
+
+        -- 進貨總金額
         (
           SELECT COALESCE(SUM(sh.total_quantity * sh.price), 0)
           FROM stock_history sh
           WHERE sh.change_number = r.restock_id
-        ) AS total_price
+          AND sh.change_type = 10
+        ) AS total_in_price,
+
+        -- 退貨總數量
+        (
+          SELECT COALESCE(SUM(sh.total_quantity), 0)
+          FROM stock_history sh
+          WHERE sh.change_number = r.restock_id
+          AND sh.change_type = 12
+        ) AS total_return_quantity,
+
+        -- 退貨總金額
+        (
+          SELECT COALESCE(SUM(sh.total_quantity * sh.price), 0)
+          FROM stock_history sh
+          WHERE sh.change_number = r.restock_id
+          AND sh.change_type = 12
+        ) AS total_return_price
+
       FROM restock r
       LEFT JOIN manufactor m ON r.manufactor = m.manufactor_id
       ${whereClause}
       ORDER BY r.create_date DESC
+      LIMIT $${paramIndex++} OFFSET $${paramIndex++}
+      `,
+      [...values, pageSize, offset]
+    );
+
+    const list = result.rows;
+
+    const countResult = await db.query(
+      `
+      SELECT COUNT(*) AS total
+      FROM restock r
+      ${whereClause}
       `,
       values
     );
 
-    const summary = result.rows;
+    const total = Number(countResult.rows[0].total);
+    const totalPages = Math.ceil(total / pageSize);
+
     res.status(201).json({
       code: response.success,
       msg: "查詢成功",
       data: {
-        list: summary
+        list,
+        total,
+        page,
+        pageSize,
+        totalPages
       },
     });
   } catch (error) {
@@ -582,7 +705,6 @@ router.post("/sale_list", async (req, res) => {
   const conditions = [];
   const values = [];
   let paramIndex = 1;
-  conditions.push(`s.is_deleted = false`);
 
   if (filter) {
       // ILIKE不區分大小寫
@@ -599,8 +721,8 @@ router.post("/sale_list", async (req, res) => {
    if (selectedDate) {
     const startDate = `${selectedDate}-01`;
     conditions.push(`
-      s.create_date >= $${paramIndex++}::date 
-      AND s.create_date < ($${paramIndex++}::date + interval '1 month')
+      pm.paid_date >= $${paramIndex++}::date 
+      AND pm.paid_date < ($${paramIndex++}::date + interval '1 month')
     `);
     values.push(startDate, startDate);
   }
@@ -608,18 +730,55 @@ router.post("/sale_list", async (req, res) => {
     ? `WHERE ${conditions.join(" AND ")}`
     : "";
   try {
-     const result = await db.query(
+      const result = await db.query(
       `
       SELECT 
           p.manufactor,
           m.manufactor_name,
-          SUM(s.total_quantity) AS total_quantity,
-          SUM(s.total_quantity * s.price) AS total_price
+
+          -- 銷貨數量 (0,3 加；1 減)
+          SUM(
+            CASE 
+              WHEN pm.type IN (0, 3) THEN s.total_quantity     -- 銷貨 & 取貨
+              WHEN pm.type = 1 THEN -s.total_quantity          -- 退貨
+              ELSE 0
+            END
+          ) AS sale_quantity,
+
+          -- 銷貨金額
+          SUM(
+            CASE 
+              WHEN pm.type IN (0, 3) THEN (s.total_quantity * s.price)
+              WHEN pm.type = 1 THEN -(s.total_quantity * s.price)
+              ELSE 0
+            END
+          ) AS sale_amount,
+
+          -- 訂貨數量 (2 加；4 減)
+          SUM(
+            CASE
+              WHEN s.status = 2 THEN s.total_quantity           -- 訂貨
+              WHEN s.status = 4 THEN -s.total_quantity          -- 退訂
+              ELSE 0
+            END
+          ) AS order_quantity,
+
+          -- 訂貨金額
+          SUM(
+            CASE
+              WHEN s.status = 2 THEN pm.amount
+              WHEN s.status = 4 THEN -pm.amount
+              ELSE 0
+            END
+          ) AS order_amount
+
       FROM sale s
-      LEFT JOIN product p ON s.specification = p.specification
-      LEFT JOIN manufactor m ON p.manufactor = m.manufactor_id
+      JOIN product p ON s.specification = p.specification
+      JOIN manufactor m ON p.manufactor = m.manufactor_id
+      JOIN payment pm ON s.order_no = pm.order_no
       ${whereClause}
-      GROUP BY p.manufactor,m.manufactor_name
+      AND pm.is_deleted = false
+      GROUP BY p.manufactor, m.manufactor_name
       ORDER BY p.manufactor ${sort}
       LIMIT $${paramIndex++} OFFSET $${paramIndex++}
       `,
@@ -628,16 +787,18 @@ router.post("/sale_list", async (req, res) => {
 
     const list = result.rows;
     // 查詢總筆數
-    const countResult = await db.query(
+     const countResult = await db.query(
       `
       SELECT COUNT(*) AS total
-      FROM (
-        SELECT 1
-        FROM sale s
-        LEFT JOIN product p ON s.specification = p.specification
-        ${whereClause}
-        GROUP BY p.manufactor
-      ) AS grouped
+        FROM (
+          SELECT 1
+          FROM sale s
+          JOIN product p ON s.specification = p.specification
+          JOIN payment pm ON s.order_no = pm.order_no
+          ${whereClause}
+          AND pm.is_deleted = false
+          GROUP BY p.manufactor
+        ) AS grouped
       `,
       values
     );
@@ -645,12 +806,48 @@ router.post("/sale_list", async (req, res) => {
 
     const summaryResult = await db.query(
       `
-      SELECT 
-          COALESCE(SUM(s.total_quantity), 0) AS total_sale_volume,
-          COALESCE(SUM(s.total_quantity * s.price), 0) AS total_sale_amount
+     SELECT 
+        -- 銷貨數量
+        COALESCE(SUM(
+          CASE 
+            WHEN pm.type IN (0,3) THEN s.total_quantity
+            WHEN pm.type = 1 THEN -s.total_quantity
+            ELSE 0
+          END
+        ), 0) AS total_sale_volume,
+
+        -- 銷貨總額
+        COALESCE(SUM(
+          CASE 
+            WHEN pm.type IN (0,3) THEN (s.total_quantity * s.price)
+            WHEN pm.type = 1 THEN -(s.total_quantity * s.price)
+            ELSE 0
+          END
+        ), 0) AS total_sale_amount,
+
+        -- 訂貨數量
+        COALESCE(SUM(
+          CASE 
+            WHEN s.status = 2 THEN s.total_quantity
+            WHEN s.status = 4 THEN -s.total_quantity
+            ELSE 0
+          END
+        ), 0) AS total_order_volume,
+
+        -- 訂貨總額
+        COALESCE(SUM(
+          CASE 
+            WHEN s.status = 2 THEN pm.amount
+            WHEN s.status = 4 THEN -pm.amount
+            ELSE 0
+          END
+        ), 0) AS total_order_amount
+
       FROM sale s
-      LEFT JOIN product p ON s.specification = p.specification
+      JOIN product p ON s.specification = p.specification
+      JOIN payment pm ON s.order_no = pm.order_no
       ${whereClause}
+      AND pm.is_deleted = false
       `,
       values
     );
@@ -674,16 +871,19 @@ router.post("/sale_list", async (req, res) => {
 });
 // 查詢廠商銷貨明細
 router.post("/sale_detail", async (req, res) => {
-  const { manufactor ,selectedDate} = req.body;
+  const { manufactor, selectedDate, page, pageSize } = req.body;
+
   const conditions = [];
   const values = [];
   let paramIndex = 1;
-  conditions.push(`is_deleted = false`);
+
+  conditions.push(`pm.is_deleted = false`);
+
   if (selectedDate) {
     const startDate = `${selectedDate}-01`;
     conditions.push(`
-      s.create_date >= $${paramIndex++}::date 
-      AND s.create_date < ($${paramIndex++}::date + interval '1 month')
+      pm.paid_date >= $${paramIndex++}::date 
+      AND pm.paid_date < ($${paramIndex++}::date + interval '1 month')
     `);
     values.push(startDate, startDate);
   }
@@ -696,30 +896,66 @@ router.post("/sale_detail", async (req, res) => {
   const whereClause = conditions.length
     ? `WHERE ${conditions.join(" AND ")}`
     : "";
+
+  const offset = (page - 1) * pageSize;
+
   try {
-     const result = await db.query(
+    const listResult = await db.query(
       `
       SELECT 
-          s.sale_id,
-          s.create_date,
-          s.price,
+          s.order_no,
+          s.specification,
+          s.product_id,
           s.total_quantity,
-          (s.total_quantity * s.price) AS total_price
+          pm.type,
+          pm.amount,
+          pm.paid_date,
+          pm.paid_at
       FROM sale s
-      LEFT JOIN product p ON s.specification = p.specification
-      LEFT JOIN manufactor m ON p.manufactor = m.manufactor_id
+      LEFT JOIN product p 
+          ON s.specification = p.specification 
+         AND s.product_id = p.product_id
+      LEFT JOIN manufactor m 
+          ON p.manufactor = m.manufactor_id
+      JOIN payment pm 
+          ON s.order_no = pm.order_no
       ${whereClause}
-      ORDER BY s.create_date DESC
+      ORDER BY pm.paid_at DESC
+      LIMIT $${paramIndex++} OFFSET $${paramIndex++}
+      `,
+      [...values, pageSize, offset]
+    );
+
+    const list = listResult.rows;
+
+    const countResult = await db.query(
+      `
+      SELECT COUNT(*) AS total
+      FROM sale s
+      LEFT JOIN product p 
+          ON s.specification = p.specification 
+         AND s.product_id = p.product_id
+      LEFT JOIN manufactor m 
+          ON p.manufactor = m.manufactor_id
+      JOIN payment pm 
+          ON s.order_no = pm.order_no
+      ${whereClause}
       `,
       values
     );
 
-    const summary = result.rows;
+    const total = Number(countResult.rows[0].total);
+    const totalPages = Math.ceil(total / pageSize);
+
     res.status(201).json({
       code: response.success,
       msg: "查詢成功",
       data: {
-        list: summary
+        list,
+        total,
+        page,
+        pageSize,
+        totalPages,
       },
     });
   } catch (error) {

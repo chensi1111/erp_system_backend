@@ -29,49 +29,73 @@ router.post("/list", async (req, res) => {
 
   // 查詢模板函式
   const queryData = async (range, alias) => {
-    const saleWhere = `
-      WHERE s.is_deleted = false
-      AND s.create_date >= $1::date 
-      AND s.create_date < $2::date
-    `;
-    const restockWhere = `
-      WHERE r.is_deleted = false
-      AND r.create_date >= $1::date 
-      AND r.create_date < $2::date
-    `;
+  const saleWhere = `
+    WHERE pm.is_deleted = false
+    AND pm.paid_date >= $1::date 
+    AND pm.paid_date < $2::date
+  `;
+  const restockWhere = `
+    WHERE r.is_deleted = false
+    AND r.date >= $1::date 
+    AND r.date < $2::date
+  `;
 
-    const saleResult = await db.query(
-      `
-      SELECT
-        COALESCE(SUM(s.handing_fee), 0) AS total_fee,
-        SUM(CASE WHEN s.handing_fee > 0 THEN 1 ELSE 0 END) AS fee_count, 
-        COALESCE(SUM(s.total_quantity), 0) AS total_sale_volume,
-        COALESCE(SUM(s.total_quantity * s.price), 0) AS total_sale_amount,
-        SUM(s.total_quantity * (s.price - COALESCE(p.average_cost, 0))) AS total_profit
-      FROM sale s
-      LEFT JOIN product p ON s.specification = p.specification
-      ${saleWhere}
-      `,
-      [range.start, range.end]
-    );
+  // Sale 查詢
+  const saleResult = await db.query(
+    `
+    SELECT
+      COALESCE(SUM(CASE WHEN s.status IN (0, 3) THEN s.total_quantity ELSE 0 END), 0) AS total_sale_volume,
+      COALESCE(SUM(CASE WHEN s.status IN (0, 3) THEN s.total_quantity * s.price ELSE 0 END), 0) AS total_sale_amount,
+      COALESCE(SUM(CASE WHEN s.status = 1 THEN s.total_quantity ELSE 0 END), 0) AS total_refund_volume,
+      COALESCE(SUM(CASE WHEN s.status = 1 THEN s.total_quantity * s.price ELSE 0 END), 0) AS total_refund_amount,
+      COALESCE(MAX(st.cumulative_cost), 0) AS cumulative_cost,
+      COALESCE(MAX(st.cumulative_in_quantity), 0) AS cumulative_in_quantity
+    FROM sale s
+    LEFT JOIN product p ON s.specification = p.specification AND s.product_id = p.product_id
+    JOIN payment pm ON s.order_no = pm.order_no
+    LEFT JOIN stock st ON s.specification = st.specification AND s.product_id = st.product_id
+    ${saleWhere}
+    `
+    ,
+    [range.start, range.end]
+  );
 
-    const restockResult = await db.query(
-      `
-      SELECT 
-        COALESCE(SUM(r.total_quantity), 0) AS total_restock_volume,
-        COALESCE(SUM(r.total_quantity * r.price), 0) AS total_restock_amount
-      FROM restock r
-      ${restockWhere}
-      `,
-      [range.start, range.end]
-    );
+  // 計算平均成本 (避免除以 0)
+  const cumulative_cost = saleResult.rows[0]?.cumulative_cost ?? 0;
+  const cumulative_in_quantity = saleResult.rows[0]?.cumulative_in_quantity ?? 0;
+  const avg_cost = cumulative_in_quantity ? cumulative_cost / cumulative_in_quantity : 0;
 
-    return {
-      month: alias,
-      sale: saleResult.rows[0],
-      restock: restockResult.rows[0],
-    };
+  // Restock 查詢
+  const restockResult = await db.query(
+    `
+    SELECT 
+      COALESCE(SUM(sh.total_quantity), 0) AS total_restock_volume,
+      COALESCE(SUM(sh.total_quantity * sh.price), 0) AS total_restock_amount
+    FROM restock r
+    JOIN stock_history sh ON r.restock_id = sh.change_number
+    ${restockWhere}
+    `,
+    [range.start, range.end]
+  );
+
+  return {
+    month: alias,
+    sale: {
+      total_sale_volume: saleResult.rows[0]?.total_sale_volume ?? 0,
+      total_sale_amount: saleResult.rows[0]?.total_sale_amount ?? 0,
+      total_refund_volume: saleResult.rows[0]?.total_refund_volume ?? 0,
+      total_refund_amount: saleResult.rows[0]?.total_refund_amount ?? 0,
+      cumulative_cost,
+      cumulative_in_quantity,
+      avg_cost
+    },
+    restock: {
+      total_restock_volume: restockResult.rows[0]?.total_restock_volume ?? 0,
+      total_restock_amount: restockResult.rows[0]?.total_restock_amount ?? 0,
+    }
   };
+};
+
 
   try {
     // 分別查詢
@@ -109,26 +133,26 @@ router.post("/year", async (req, res) => {
   // 查詢模板函式
   const queryData = async (range, alias) => {
     const saleWhere = `
-      WHERE s.is_deleted = false
-      AND s.create_date >= $1::date 
-      AND s.create_date < $2::date
+      WHERE pm.is_deleted = false
+      AND pm.paid_date >= $1::date 
+      AND pm.paid_date < $2::date
     `;
     const restockWhere = `
       WHERE r.is_deleted = false
-      AND r.create_date >= $1::date 
-      AND r.create_date < $2::date
+      AND r.date >= $1::date 
+      AND r.date < $2::date
     `;
 
     const saleResult = await db.query(
       `
       SELECT
-        COALESCE(SUM(s.handing_fee), 0) AS total_fee,
-        SUM(CASE WHEN s.handing_fee > 0 THEN 1 ELSE 0 END) AS fee_count,  
-        COALESCE(SUM(s.total_quantity), 0) AS total_sale_volume,
-        COALESCE(SUM(s.total_quantity * s.price), 0) AS total_sale_amount,
-        SUM(s.total_quantity * (s.price - COALESCE(p.average_cost, 0))) AS total_profit
+        COALESCE(SUM(CASE WHEN s.status IN (0, 3) THEN s.total_quantity ELSE 0 END), 0) AS total_sale_volume,
+        COALESCE(SUM(CASE WHEN s.status IN (0, 3) THEN s.total_quantity * s.price ELSE 0 END), 0) AS total_sale_amount,
+        COALESCE(SUM(CASE WHEN s.status = 1 THEN s.total_quantity ELSE 0 END), 0) AS total_refund_volume,
+        COALESCE(SUM(CASE WHEN s.status = 1 THEN s.total_quantity * s.price ELSE 0 END), 0) AS total_refund_amount
       FROM sale s
       LEFT JOIN product p ON s.specification = p.specification
+      JOIN payment pm ON s.order_no = pm.order_no
       ${saleWhere}
       `,
       [range.start, range.end]
@@ -137,9 +161,10 @@ router.post("/year", async (req, res) => {
     const restockResult = await db.query(
       `
       SELECT 
-        COALESCE(SUM(r.total_quantity), 0) AS total_restock_volume,
-        COALESCE(SUM(r.total_quantity * r.price), 0) AS total_restock_amount
+        COALESCE(SUM(sh.total_quantity), 0) AS total_restock_volume,
+        COALESCE(SUM(sh.total_quantity * sh.price), 0) AS total_restock_amount
       FROM restock r
+      JOIN stock_history sh ON r.restock_id = sh.change_number
       ${restockWhere}
       `,
       [range.start, range.end]

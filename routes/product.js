@@ -231,8 +231,40 @@ router.post("/detail", async (req, res) => {
   }
   try {
     const result =  await db.query(
-      "SELECT * FROM product WHERE specification = $1 AND product_id = $2",
+      `SELECT p.*,s.last_cost,s.cumulative_cost,s.cumulative_in_quantity
+      FROM product p
+      LEFT JOIN stock s ON p.product_id = s.product_id AND p.specification = s.specification
+      WHERE p.specification = $1 AND p.product_id = $2`,
       [specification,product_id]
+    );
+    const product = result.rows[0];
+    if(!product){
+      logger.warn("查無此商品")
+      return sendError(res, response.not_found, "查無此商品");
+    }
+    res.status(200).json({
+      code: response.success,
+      msg: "查詢成功",
+      data: product
+    });
+  } catch (error) {
+    logger.error(error)
+    return sendError(res, response.server_error, "伺服器錯誤，請稍後再試", 500);
+  } 
+})
+// 增加規格查詢詳細資料
+router.post("/specification", async (req, res) => {
+  const { specification } = req.body;
+  if(!specification){
+    logger.warn("缺少必要資料")
+    return sendError(res, response.missing_info, '缺少必要資料');
+  }
+  try {
+    const result =  await db.query(
+      `SELECT p.*
+      FROM product p
+      WHERE p.specification = $1`,
+      [specification]
     );
     const product = result.rows[0];
     if(!product){

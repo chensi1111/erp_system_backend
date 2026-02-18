@@ -135,9 +135,13 @@ router.post("/history", async (req, res) => {
     if (filter) {
       // ILIKE不區分大小寫
       // %value%部分相符比對
-      if (filter.product_name) {
-        conditions.push(`product_name ILIKE $${paramIndex++}`);
-        values.push(`%${filter.product_name}%`);
+      if (filter.product_id) {
+        conditions.push(`product_id ILIKE $${paramIndex++}`);
+        values.push(`%${filter.product_id}%`);
+      }
+      if (filter.specification) {
+        conditions.push(`specification ILIKE $${paramIndex++}`);
+        values.push(`%${filter.specification}%`);
       }
       if (filter.change_number) {
         conditions.push(`change_number ILIKE $${paramIndex++}`);
@@ -185,7 +189,7 @@ router.post("/history", async (req, res) => {
 // 查詢詳細資料
 router.post("/history_detail", async (req, res) => {
   const { change_number,change_type } = req.body;
-  if(!change_number||!change_type){
+  if(!change_number||change_type==undefined){
     logger.warn("缺少必要資料")
     return sendError(res, response.missing_info, '缺少必要資料');
   }
