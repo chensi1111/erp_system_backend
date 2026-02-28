@@ -22,8 +22,12 @@ router.post("/specification", async (req, res) => {
   }
   try {
     const result = await db.query(
-      `SELECT specification from product WHERE product_id = $1`,
-      [product_id]
+       `
+      SELECT specification 
+      FROM product 
+      WHERE product_id ILIKE $1
+      `,
+      [`%${product_id}%`]  // 模糊搜尋
     );
     if (!result.rows.length) {
       logger.warn("找不到商品資料");
@@ -50,6 +54,7 @@ router.post("/productInfo", async (req, res) => {
     const result = await db.query(
       `
     SELECT 
+      p.product_id,
       p.product_name,
       p.manufactor,
       p.brand,
