@@ -229,9 +229,9 @@ router.post("/create", async (req, res) => {
           let newAll = type === 0 ? oldAll + changeQty : oldAll - changeQty;
 
           // 檢查庫存量
-          if (newAll < oldReserved) {
-            throw new Error(`庫存不可低於預留數量 尺寸=${oldItem.size} (預留=${oldReserved} 更新=${newAll})`);
-          }
+          // if (newAll < oldReserved) {
+          //   throw new Error(`庫存不可低於預留數量 尺寸=${oldItem.size} (預留=${oldReserved} 更新=${newAll})`);
+          // }
 
           const newAvailable = newAll - oldReserved;
 

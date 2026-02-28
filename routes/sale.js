@@ -195,34 +195,34 @@ router.post("/create", async (req, res) => {
     // ---------------------------------------------------------
     //   type = 0 → 銷貨：需要檢查庫存
     // ---------------------------------------------------------
-    if (type === 0) {
-      let insufficientSizes = [];
+    // if (type === 0) {
+    //   let insufficientSizes = [];
 
-      for (const soldItem of quantities) {
-        const stockItem = currentStock.find((s) => s.size === soldItem.size);
-        const available = parseInt(stockItem?.available_quantity || "0", 10);
-        const soldQty = parseInt(soldItem.quantity || "0", 10);
+    //   for (const soldItem of quantities) {
+    //     const stockItem = currentStock.find((s) => s.size === soldItem.size);
+    //     const available = parseInt(stockItem?.available_quantity || "0", 10);
+    //     const soldQty = parseInt(soldItem.quantity || "0", 10);
 
-        if (soldQty > available) {
-          insufficientSizes.push({
-            size: soldItem.size,
-            available,
-            requested: soldQty,
-          });
-        }
-      }
+    //     if (soldQty > available) {
+    //       insufficientSizes.push({
+    //         size: soldItem.size,
+    //         available,
+    //         requested: soldQty,
+    //       });
+    //     }
+    //   }
 
-      if (insufficientSizes.length > 0) {
-        await client.query("ROLLBACK");
-        return sendError(
-          res,
-          response.insufficient_stock,
-          `以下尺寸庫存不足: ${insufficientSizes
-            .map((s) => `${s.size}(庫存${s.available}，需求${s.requested})`)
-            .join(", ")}`
-        );
-      }
-    }
+    //   if (insufficientSizes.length > 0) {
+    //     await client.query("ROLLBACK");
+    //     return sendError(
+    //       res,
+    //       response.insufficient_stock,
+    //       `以下尺寸庫存不足: ${insufficientSizes
+    //         .map((s) => `${s.size}(庫存${s.available}，需求${s.requested})`)
+    //         .join(", ")}`
+    //     );
+    //   }
+    // }
 
     // ---------------------------------------------------------
     //   更新庫存（銷貨扣庫存 & 退貨加庫存）
@@ -238,8 +238,8 @@ router.post("/create", async (req, res) => {
         // 銷貨 
         return {
           ...stockItem,
-          available_quantity: Math.max(oldAvail - qty, 0),
-          all_quantity: Math.max(oldAllQty - qty, 0),
+          available_quantity: oldAvail - qty,
+          all_quantity: oldAllQty - qty,
         };
       } else {
         // 退貨 
@@ -254,7 +254,7 @@ router.post("/create", async (req, res) => {
     // total_quantity 依 type 更新
     const newTotal =
       type === 0
-        ? Math.max(currentTotal - total_quantity, 0)
+        ? currentTotal - total_quantity
         : currentTotal + total_quantity;
 
     await client.query(
@@ -419,18 +419,18 @@ router.post("/create_order", async (req, res) => {
           });
         }
       }
-      if (insufficientSizes.length > 0) {
-        await client.query("ROLLBACK");
-        logger.warn("庫存不足");
-        return sendError(
-          res,
-          response.insufficient_stock,
-          `以下尺寸庫存不足: ${insufficientSizes
-            .map((s) => `${s.size}(庫存${s.available}，需求${s.requested})`)
-            .join(", ")}`
-        );
-      }
-      const newTotal = Math.max(currentTotal - total_quantity, 0);
+      // if (insufficientSizes.length > 0) {
+      //   await client.query("ROLLBACK");
+      //   logger.warn("庫存不足");
+      //   return sendError(
+      //     res,
+      //     response.insufficient_stock,
+      //     `以下尺寸庫存不足: ${insufficientSizes
+      //       .map((s) => `${s.size}(庫存${s.available}，需求${s.requested})`)
+      //       .join(", ")}`
+      //   );
+      // }
+      const newTotal = currentTotal - total_quantity;
       // 預留庫存
       const updatedStock = currentStock.map((stockItem) => {
         const soldItem = quantities.find((q) => q.size === stockItem.size);
@@ -439,8 +439,8 @@ router.post("/create_order", async (req, res) => {
         const oldReservedQty = parseInt(stockItem.reserved_quantity || "0", 10);
         return {
           ...stockItem,
-          available_quantity: Math.max(oldQty - soldQty, 0),
-          reserved_quantity: Math.max(oldReservedQty + soldQty, 0),
+          available_quantity: oldQty - soldQty,
+          reserved_quantity: oldReservedQty + soldQty,
         };
       });
 
@@ -509,11 +509,11 @@ router.post("/list", async (req, res) => {
       values.push(`%${filter.order_no}%`);
     }
     if (filter.product_id) {
-      conditions.push(`product_id ILIKE $${paramIndex++}`);
+      conditions.push(`s.product_id ILIKE $${paramIndex++}`);
       values.push(`%${filter.product_id}%`);
     }
     if (filter.specification) {
-      conditions.push(`specification ILIKE $${paramIndex++}`);
+      conditions.push(`s.specification ILIKE $${paramIndex++}`);
       values.push(`%${filter.specification}%`);
     }
   }
@@ -836,8 +836,8 @@ router.post("/delete", async (req, res) => {
       const oldAllQty = parseInt(stockItem.all_quantity || "0", 10);
       return {
          ...stockItem,
-         available_quantity: Math.max(oldQty - soldQty, 0),
-         all_quantity: Math.max(oldAllQty - soldQty, 0),
+         available_quantity: oldQty + soldQty,
+         all_quantity: oldAllQty + soldQty,
       };
     });
     const updateQuantity = sale_total_quantity + stock_total_quantity
@@ -922,8 +922,8 @@ router.post("/delete_refund", async (req, res) => {
       const oldAllQty = parseInt(stockItem.all_quantity || "0", 10);
       return {
          ...stockItem,
-         available_quantity: Math.max(oldQty - soldQty, 0),
-         all_quantity: Math.max(oldAllQty - soldQty, 0),
+         available_quantity: oldQty - soldQty,
+         all_quantity: oldAllQty - soldQty,
       };
     });
     const updateQuantity = sale_total_quantity + stock_total_quantity
@@ -1031,8 +1031,8 @@ router.post("/delete_order", async (req, res) => {
       const oldReservedQty = parseInt(stockItem.reserved_quantity || "0", 10);
       return {
         ...stockItem,
-        available_quantity: Math.max(oldAvailableQty + soldQty, 0),
-        reserved_quantity: Math.max(oldReservedQty - soldQty, 0),
+        available_quantity: oldAvailableQty + soldQty,
+        reserved_quantity: oldReservedQty - soldQty,
       };
     });
     const updateQuantity = sale_total_quantity + stock_total_quantity
@@ -1118,8 +1118,8 @@ router.post("/delete_pickup", async (req, res) => {
       const oldAllQty = parseInt(stockItem.all_quantity || "0", 10);
       return {
         ...stockItem,
-        reserved_quantity:Math.max(oldReservedQty + soldQty, 0),
-        all_quantity: Math.max(oldAllQty + soldQty, 0),
+        reserved_quantity:oldReservedQty + soldQty,
+        all_quantity: oldAllQty + soldQty,
       };
     });
     const updateQuantity = sale_total_quantity + stock_total_quantity
@@ -1294,18 +1294,18 @@ router.post("/order_complete", async (req, res) => {
           });
         }
       }
-      if (insufficientSizes.length > 0) {
-        await client.query("ROLLBACK");
-        logger.warn("庫存不足");
-        return sendError(
-          res,
-          response.insufficient_stock,
-          `以下尺寸預留庫存不足: ${insufficientSizes
-            .map((s) => `${s.size}(預留庫存${s.reserved}，需求${s.requested})`)
-            .join(", ")}`
-        );
-      }
-      const newTotal = Math.max(currentTotal - order.total_quantity, 0);
+      // if (insufficientSizes.length > 0) {
+      //   await client.query("ROLLBACK");
+      //   logger.warn("庫存不足");
+      //   return sendError(
+      //     res,
+      //     response.insufficient_stock,
+      //     `以下尺寸預留庫存不足: ${insufficientSizes
+      //       .map((s) => `${s.size}(預留庫存${s.reserved}，需求${s.requested})`)
+      //       .join(", ")}`
+      //   );
+      // }
+      const newTotal = currentTotal - order.total_quantity;
       // 扣除庫存
       const updatedStock = currentStock.map((stockItem) => {
         const soldItem = order.quantities.find((q) => q.size === stockItem.size);
@@ -1314,8 +1314,8 @@ router.post("/order_complete", async (req, res) => {
         const oldAllQty = parseInt(stockItem.all_quantity || "0", 10);
         return {
           ...stockItem,
-          reserved_quantity:Math.max(oldReservedQty - soldQty, 0),
-          all_quantity: Math.max(oldAllQty - soldQty, 0),
+          reserved_quantity:oldReservedQty - soldQty,
+          all_quantity: oldAllQty - soldQty,
         };
       });
 

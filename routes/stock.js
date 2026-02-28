@@ -80,6 +80,29 @@ router.post("/list", async (req, res) => {
       values
     );
     const totalStock = totalStockResult.rows[0].total_stock
+    // 庫存金額
+    const totalAmountResult = await db.query(
+      `
+      SELECT
+        COALESCE(
+          SUM((elem->>'all_quantity')::int * p.purchase_price),
+          0
+        ) AS total_cost,
+        COALESCE(
+          SUM((elem->>'all_quantity')::int * p.recommended_price),
+          0
+        ) AS total_sale
+      FROM stock s
+      LEFT JOIN product p 
+        ON s.product_id = p.product_id 
+        AND s.specification = p.specification
+      CROSS JOIN LATERAL jsonb_array_elements(s.stock_qty) elem
+      ${whereClause}
+      `,
+      values
+    );
+    const totalCostAmount = totalAmountResult.rows[0].total_cost
+    const totalSaleAmount = totalAmountResult.rows[0].total_sale
     res.status(201).json({
       code: response.success,
       msg: "查詢成功",
@@ -87,6 +110,8 @@ router.post("/list", async (req, res) => {
         list,
         total,
         totalStock,
+        totalCostAmount,
+        totalSaleAmount,
         page,
         pageSize,
         totalPages: Math.ceil(total / pageSize),
