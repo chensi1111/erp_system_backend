@@ -14,15 +14,20 @@ function sendError(res, code, msg, status = 400) {
 }
 // 獲取商品規格選項
 router.post("/specification", async (req, res) => {
-  let { specification } = req.body;
-  if (!specification) {
+  let { product_id } = req.body;
+  if (!product_id) {
     logger.warn("缺少必要資料");
     return sendError(res, response.missing_info, "缺少必要資料");
   }
   try {
     const result = await db.query(
-      `SELECT product_id from product WHERE specification = $1`,[specification]
-    )
+       `
+      SELECT specification 
+      FROM product 
+      WHERE product_id ILIKE $1
+      `,
+      [`%${product_id}%`]  // 模糊搜尋
+    );
     if(!result.rows.length){
       logger.warn("找不到商品資料");
       return sendError(res, response.not_found, "找不到商品資料");
@@ -46,8 +51,7 @@ router.post("/productList", async (req, res) => {
   }
   try {
     const result = await db.query(
-      // 去除重複值
-      `SELECT DISTINCT specification from product WHERE manufactor = $1`,[manufactor]
+      `SELECT DISTINCT product_id from product WHERE manufactor = $1`,[manufactor]
     )
     if(!result.rows.length){
       logger.warn("找不到商品資料");
@@ -65,15 +69,16 @@ router.post("/productList", async (req, res) => {
 })
 // 對應資料
 router.post("/productInfo", async (req, res) => {
-  let { specification,product_id } = req.body;
-  if (!specification||!product_id) {
+  let { specification } = req.body;
+  if (!specification) {
     logger.warn("缺少必要資料");
     return sendError(res, response.missing_info, "缺少必要資料");
   }
   try {
     const result = await db.query(
       `
-    SELECT 
+    SELECT
+      p.product_id,
       p.product_name,
       p.manufactor,
       p.brand,
@@ -89,9 +94,9 @@ router.post("/productInfo", async (req, res) => {
      FROM product p
      LEFT JOIN size s ON p.size = s.size_id
      LEFT JOIN stock st ON p.product_id = st.product_id AND p.specification = st.specification
-     WHERE p.specification = $1 AND p.product_id = $2
+     WHERE p.specification = $1
      `,
-      [specification,product_id]
+      [specification]
     );
     res.status(200).json({
       code: response.success,
