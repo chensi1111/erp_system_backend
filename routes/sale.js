@@ -332,7 +332,6 @@ router.post("/create_order", async (req, res) => {
     !total_quantity ||
     !price ||
     !prepaid_price ||
-    !remaining_price ||
     transaction === undefined ||
     pay === undefined ||
     !date ||
