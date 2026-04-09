@@ -42,14 +42,18 @@ router.post("/list", async (req, res) => {
         conditions.push(`s.product_name ILIKE $${paramIndex++}`);
         values.push(`%${filter.product_name}%`);
       }
+      if(filter.manufactor) {
+        conditions.push(`p.manufactor ILIKE $${paramIndex++}`);
+        values.push(`%${filter.manufactor}%`);
+      }
     }
 
     const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   try {
     const result =  await db.query(
-      `SELECT s.product_id, s.product_name, s.specification, s.stock_qty
+      `SELECT s.product_id,s.product_name, s.specification,s.stock_qty,p.manufactor
       FROM stock s
-      LEFT JOIN product p ON s.specification = p.specification AND s.product_id = p.product_id
+      LEFT JOIN product p ON s.product_id = p.product_id AND s.specification = p.specification
       ${whereClause} 
       ORDER BY s.product_id ${sort} 
       LIMIT $${paramIndex++} OFFSET $${paramIndex++}`,
@@ -58,18 +62,62 @@ router.post("/list", async (req, res) => {
     const list = result.rows;
     // 查詢總筆數
     const totalResult = await db.query(
-      `SELECT COUNT(*) as total FROM stock s 
-      LEFT JOIN product p ON s.specification = p.specification AND s.product_id = p.product_id
+      `SELECT COUNT(*) as total 
+      FROM stock s
+      LEFT JOIN product p 
+        ON s.product_id = p.product_id 
+        AND s.specification = p.specification
       ${whereClause}`,
       values
     );
     const total = totalResult.rows[0].total;
+    // 總庫存量
+    const totalStockResult = await db.query(
+      `
+      SELECT 
+        COALESCE(SUM((elem->>'all_quantity')::int),0) as total_stock
+      FROM stock s
+      LEFT JOIN product p 
+        ON s.product_id = p.product_id 
+        AND s.specification = p.specification
+      CROSS JOIN LATERAL jsonb_array_elements(s.stock_qty) elem
+      ${whereClause}
+      `,
+      values
+    );
+    const totalStock = totalStockResult.rows[0].total_stock
+    // 庫存金額
+    const totalAmountResult = await db.query(
+      `
+      SELECT
+        COALESCE(
+          SUM((elem->>'all_quantity')::int * p.purchase_price),
+          0
+        ) AS total_cost,
+        COALESCE(
+          SUM((elem->>'all_quantity')::int * p.recommended_price),
+          0
+        ) AS total_sale
+      FROM stock s
+      LEFT JOIN product p 
+        ON s.product_id = p.product_id 
+        AND s.specification = p.specification
+      CROSS JOIN LATERAL jsonb_array_elements(s.stock_qty) elem
+      ${whereClause}
+      `,
+      values
+    );
+    const totalCostAmount = totalAmountResult.rows[0].total_cost
+    const totalSaleAmount = totalAmountResult.rows[0].total_sale
     res.status(201).json({
       code: response.success,
       msg: "查詢成功",
       data: {
         list,
         total,
+        totalStock,
+        totalCostAmount,
+        totalSaleAmount,
         page,
         pageSize,
         totalPages: Math.ceil(total / pageSize),

@@ -165,6 +165,7 @@ router.post("/list", async (req, res) => {
         page,
         pageSize,
         total,
+        totalPages: Math.ceil(total / pageSize),
         summary
       },
     });
