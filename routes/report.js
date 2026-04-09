@@ -40,6 +40,10 @@ router.post("/list", async (req, res) => {
       conditions.push(`s.product_name ILIKE $${paramIndex++}`);
       values.push(`%${filter.product_name}%`);
     }
+    if (filter?.manufactor) {
+      conditions.push(`p.manufactor ILIKE $${paramIndex++}`);
+      values.push(`%${filter.manufactor}%`);
+    }
 
     // 日期篩選：依 payment.paid_date
     if (rangeType) {
@@ -86,6 +90,7 @@ router.post("/list", async (req, res) => {
       FROM sale s
       LEFT JOIN payment pm ON pm.order_no = s.order_no
       LEFT JOIN stock st ON st.product_id = s.product_id AND st.specification = s.specification
+      LEFT JOIN product p ON s.specification = p.specification AND s.product_id = p.product_id
       ${whereClause}
       GROUP BY s.product_id, s.product_name, s.specification, st.cumulative_cost, st.cumulative_in_quantity
       ORDER BY s.product_id ${sort || "ASC"}
@@ -128,6 +133,7 @@ router.post("/list", async (req, res) => {
       FROM sale s
       LEFT JOIN payment pm ON pm.order_no = s.order_no
       LEFT JOIN stock st ON st.product_id = s.product_id AND st.specification = s.specification
+      LEFT JOIN product p ON s.specification = p.specification AND s.product_id = p.product_id
       ${whereClause}
     `;
 
@@ -142,6 +148,7 @@ router.post("/list", async (req, res) => {
         SELECT 1
          FROM sale s
          LEFT JOIN payment pm ON s.order_no = pm.order_no
+         LEFT JOIN product p ON s.specification = p.specification AND s.product_id = p.product_id
           ${whereClause}
           GROUP BY s.product_id, s.product_name, s.specification ) t`
         ; 

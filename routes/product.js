@@ -187,6 +187,10 @@ router.post("/list", async (req, res) => {
         conditions.push(`product_name ILIKE $${paramIndex++}`);
         values.push(`%${filter.product_name}%`);
       }
+      if (filter.manufactor) {
+        conditions.push(`manufactor ILIKE $${paramIndex++}`);
+        values.push(`%${filter.manufactor}%`);
+      }
     }
 
     const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
