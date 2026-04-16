@@ -545,7 +545,7 @@ router.post("/list", async (req, res) => {
       `
       SELECT 
         s.*, 
-        st.cumulative_cost/st.cumulative_in_quantity as average_cost,
+        st.cumulative_cost / NULLIF(st.cumulative_in_quantity, 0) as average_cost,
         pm.type, 
         pm.amount, 
         pm.paid_at,
