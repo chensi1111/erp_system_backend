@@ -34,6 +34,14 @@ router.post("/list", async (req, res) => {
         conditions.push(`s.specification ILIKE $${paramIndex++}`);
         values.push(`%${filter.specification}%`);
       }
+      if (filter.manufactor) {
+        conditions.push(`p.manufactor ILIKE $${paramIndex++}`);
+        values.push(`%${filter.manufactor}%`);
+      }
+      if (filter.product_name) {
+        conditions.push(`s.product_name ILIKE $${paramIndex++}`);
+        values.push(`%${filter.product_name}%`);
+      }
       if(filter.manufactor) {
         conditions.push(`p.manufactor ILIKE $${paramIndex++}`);
         values.push(`%${filter.manufactor}%`);
@@ -47,21 +55,19 @@ router.post("/list", async (req, res) => {
       FROM stock s
       LEFT JOIN product p ON s.product_id = p.product_id AND s.specification = p.specification
       ${whereClause} 
-      ORDER BY product_id ${sort} 
+      ORDER BY s.product_id ${sort} 
       LIMIT $${paramIndex++} OFFSET $${paramIndex++}`,
       [...values,pageSize, offset]
     );
     const list = result.rows;
     // 查詢總筆數
     const totalResult = await db.query(
-      `
-      SELECT COUNT(*) as total
+      `SELECT COUNT(*) as total 
       FROM stock s
       LEFT JOIN product p 
         ON s.product_id = p.product_id 
         AND s.specification = p.specification
-      ${whereClause}
-      `,
+      ${whereClause}`,
       values
     );
     const total = totalResult.rows[0].total;
@@ -189,37 +195,44 @@ router.post("/history", async (req, res) => {
       // ILIKE不區分大小寫
       // %value%部分相符比對
       if (filter.product_id) {
-        conditions.push(`product_id ILIKE $${paramIndex++}`);
+        conditions.push(`sh.product_id ILIKE $${paramIndex++}`);
         values.push(`%${filter.product_id}%`);
       }
       if (filter.specification) {
-        conditions.push(`specification ILIKE $${paramIndex++}`);
+        conditions.push(`sh.specification ILIKE $${paramIndex++}`);
         values.push(`%${filter.specification}%`);
       }
       if (filter.change_number) {
-        conditions.push(`change_number ILIKE $${paramIndex++}`);
+        conditions.push(`sh.change_number ILIKE $${paramIndex++}`);
         values.push(`%${filter.change_number}%`);
       }
       if (filter.change_type) {
-        conditions.push(`change_type ILIKE $${paramIndex++}`);
-        values.push(`%${filter.change_type}%`);
+        conditions.push(`sh.change_type = $${paramIndex++}`);
+        values.push(Number(filter.change_type));
+      }
+      if (filter.manufactor) {
+        conditions.push(`p.manufactor ILIKE $${paramIndex++}`);
+        values.push(`%${filter.manufactor}%`);
       }
     }
 
     const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   try {
     const result =  await db.query(
-      `SELECT product_id,product_name, specification,change_type,change_number,total_quantity
-      FROM stock_history 
+      `SELECT sh.product_id, p.product_name, sh.specification, sh.change_type, sh.change_number, sh.total_quantity
+      FROM stock_history sh 
+      LEFT JOIN product p ON sh.specification = p.specification AND sh.product_id = p.product_id
       ${whereClause} 
-      ORDER BY create_date ${sort} 
+      ORDER BY sh.create_date ${sort} 
       LIMIT $${paramIndex++} OFFSET $${paramIndex++}`,
       [...values,pageSize, offset]
     );
     const list = result.rows;
     // 查詢總筆數
     const totalResult = await db.query(
-      `SELECT COUNT(*) as total FROM stock_history ${whereClause}`,
+      `SELECT COUNT(*) as total FROM stock_history sh
+      LEFT JOIN product p ON sh.specification = p.specification AND sh.product_id = p.product_id 
+      ${whereClause}`,
       values
     );
     const total = totalResult.rows[0].total;
