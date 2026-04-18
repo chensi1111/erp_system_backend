@@ -557,7 +557,7 @@ router.post("/list", async (req, res) => {
       JOIN payment pm 
         ON s.order_no = pm.order_no
       ${whereClause}
-      ORDER BY paid_date ${sort}
+      ORDER BY s.id ${sort}
       LIMIT $${paramIndex++} OFFSET $${paramIndex++}
       `,
       [...values, pageSize, offset]
@@ -740,6 +740,7 @@ router.post("/order_list", async (req, res) => {
     const result = await db.query(
       `
       SELECT 
+        s.id,
         s.order_no,
         s.product_id,
         s.specification,
@@ -753,7 +754,7 @@ router.post("/order_list", async (req, res) => {
       JOIN payment pm 
         ON s.order_no = pm.order_no
       WHERE s.status = 2 AND pm.is_deleted = false
-      ORDER BY paid_date ${sort}
+      ORDER BY s.id ${sort}
       LIMIT $1 OFFSET $2
       `,
       [pageSize, offset]
