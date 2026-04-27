@@ -490,11 +490,6 @@ router.post("/delete", async (req, res) => {
           // 取消進貨 → 減少庫存
           newAll = oldAll - changeQty;
           newAvailable = newAll - oldReserved;
-
-          if (newAll < oldReserved) {
-            throw new Error(`庫存不足 尺寸=${stockItem.size}`);
-          }
-
         } else {
           // 取消退貨 → 增加庫存
           newAll = oldAll + changeQty;
