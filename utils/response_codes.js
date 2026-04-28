@@ -21,12 +21,17 @@ const responseCodes = {
   "invalid_transaction":"019",
   "invalid_color":"020",
   "invalid_handing_fee":"021",
+  "invalid_pageInfo":"022",
+  "invalid_specification":"023",
+  "invalid_manufactor":"024",
+  "invalid_action":"025",
   "id_conflict": "101",
   "name_conflict": "102",
   "specification_conflict": "103",
   "not_found": "201",
   "not_enough": "202",
   "not_allow":"203",
+  "insufficient_stock":"204",
   "server_error": "500"
 }
 module.exports = responseCodes;
