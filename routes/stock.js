@@ -2,18 +2,17 @@ const express = require("express");
 const logger = require("../logger");
 const db = require("../db");
 const response = require("../utils/response_codes");
+const sendError = require("../utils/send_error");
 const router = express.Router();
 const dayjs = require("dayjs")
 const utc = require('dayjs/plugin/utc');
 const timezone = require('dayjs/plugin/timezone');
 dayjs.extend(utc);
 dayjs.extend(timezone);
-function sendError(res, code, msg, status = 400) {
-  return res.status(status).json({ code, msg });
-}
 // 查詢列表
 router.post("/list", async (req, res) => {
   const { page, pageSize, filter,sort } = req.body;
+  const safeSort = ['ASC', 'DESC'].includes(String(sort).toUpperCase()) ? String(sort).toUpperCase() : 'ASC';
   const offset = (page - 1) * pageSize;
   if (page < 1 || pageSize < 1) {
     logger.warn("錯誤的分頁資訊")
@@ -55,7 +54,7 @@ router.post("/list", async (req, res) => {
       FROM stock s
       LEFT JOIN product p ON s.product_id = p.product_id AND s.specification = p.specification
       ${whereClause} 
-      ORDER BY s.product_id ${sort} 
+      ORDER BY s.product_id ${safeSort}
       LIMIT $${paramIndex++} OFFSET $${paramIndex++}`,
       [...values,pageSize, offset]
     );
@@ -182,6 +181,7 @@ router.post("/update", async (req, res) => {
 // 歷史紀錄
 router.post("/history", async (req, res) => {
   const { page, pageSize, filter,sort } = req.body;
+  const safeSort = ['ASC', 'DESC'].includes(String(sort).toUpperCase()) ? String(sort).toUpperCase() : 'ASC';
   const offset = (page - 1) * pageSize;
   if (page < 1 || pageSize < 1) {
     logger.warn("錯誤的分頁資訊")
@@ -223,7 +223,7 @@ router.post("/history", async (req, res) => {
       FROM stock_history sh 
       LEFT JOIN product p ON sh.specification = p.specification AND sh.product_id = p.product_id
       ${whereClause} 
-      ORDER BY sh.create_date ${sort} 
+      ORDER BY sh.create_date ${safeSort}
       LIMIT $${paramIndex++} OFFSET $${paramIndex++}`,
       [...values,pageSize, offset]
     );
@@ -282,6 +282,7 @@ router.post("/history_detail", async (req, res) => {
 // 查詢安全庫存
 router.post("/safe_list", async (req, res) => {
   const { page, pageSize, filter,sort } = req.body;
+  const safeSort = ['ASC', 'DESC'].includes(String(sort).toUpperCase()) ? String(sort).toUpperCase() : 'ASC';
   const offset = (page - 1) * pageSize;
   if (page < 1 || pageSize < 1) {
     logger.warn("錯誤的分頁資訊")
@@ -320,7 +321,7 @@ router.post("/safe_list", async (req, res) => {
       `SELECT product_id,product_name, specification,stock_qty
       FROM stock 
       ${whereClause} 
-      ORDER BY product_id ${sort} 
+      ORDER BY product_id ${safeSort}
       LIMIT $${paramIndex++} OFFSET $${paramIndex++}`,
       [...values,pageSize, offset]
     );

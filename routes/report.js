@@ -2,17 +2,16 @@ const express = require('express');
 const logger = require('../logger')
 const db =require('../db')
 const response=require('../utils/response_codes')
+const sendError = require('../utils/send_error');
 const router = express.Router();
 const dayjs = require("dayjs")
 const utc = require('dayjs/plugin/utc');
 const timezone = require('dayjs/plugin/timezone');
 dayjs.extend(utc);
 dayjs.extend(timezone);
-function sendError(res, code, msg, status = 400) {
-  return res.status(status).json({ code, msg });
-}
 router.post("/list", async (req, res) => {
   const { page, pageSize, filter, sort, rangeType, customRange } = req.body;
+  const safeSort = ['ASC', 'DESC'].includes(String(sort).toUpperCase()) ? String(sort).toUpperCase() : 'ASC';
   const offset = (page - 1) * pageSize;
 
   if (page < 1 || pageSize < 1) {
@@ -93,7 +92,7 @@ router.post("/list", async (req, res) => {
       LEFT JOIN product p ON s.specification = p.specification AND s.product_id = p.product_id
       ${whereClause}
       GROUP BY s.product_id, s.product_name, s.specification, st.cumulative_cost, st.cumulative_in_quantity
-      ORDER BY s.product_id ${sort || "ASC"}
+      ORDER BY s.product_id ${safeSort}
       LIMIT $${paramIndex++} OFFSET $${paramIndex++}
     `;
 
@@ -417,6 +416,7 @@ router.post("/top_list", async (req, res) => {
 // 查詢廠商進貨列表
 router.post("/restock_list", async (req, res) => {
   const { page, pageSize, filter, sort = "ASC", selectedDate } = req.body;
+  const safeSort = ['ASC', 'DESC'].includes(String(sort).toUpperCase()) ? String(sort).toUpperCase() : 'ASC';
   const offset = (page - 1) * pageSize;
 
   if (page < 1 || pageSize < 1) {
@@ -500,7 +500,7 @@ router.post("/restock_list", async (req, res) => {
       LEFT JOIN manufactor m ON r.manufactor = m.manufactor_id
       ${whereClause}
       GROUP BY r.manufactor, m.manufactor_name
-      ORDER BY r.manufactor ${sort}
+      ORDER BY r.manufactor ${safeSort}
       LIMIT $${idx++} OFFSET $${idx++}
     `,
       [...values, pageSize, offset]
@@ -705,6 +705,7 @@ router.post("/restock_detail", async (req, res) => {
 // 查詢廠商銷貨列表
 router.post("/sale_list", async (req, res) => {
   const { page, pageSize, filter, sort, selectedDate} = req.body;
+  const safeSort = ['ASC', 'DESC'].includes(String(sort).toUpperCase()) ? String(sort).toUpperCase() : 'ASC';
   const offset = (page - 1) * pageSize;
   if (page < 1 || pageSize < 1) {
     logger.warn("錯誤的分頁資訊");
@@ -787,7 +788,7 @@ router.post("/sale_list", async (req, res) => {
       ${whereClause}
       AND pm.is_deleted = false
       GROUP BY p.manufactor, m.manufactor_name
-      ORDER BY p.manufactor ${sort}
+      ORDER BY p.manufactor ${safeSort}
       LIMIT $${paramIndex++} OFFSET $${paramIndex++}
       `,
       [...values, pageSize, offset]

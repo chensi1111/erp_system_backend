@@ -2,6 +2,7 @@ const express = require("express");
 const logger = require("../logger");
 const db = require("../db");
 const response = require("../utils/response_codes");
+const sendError = require("../utils/send_error");
 const router = express.Router();
 const dayjs = require("dayjs");
 const utc = require("dayjs/plugin/utc");
@@ -10,9 +11,6 @@ dayjs.extend(utc);
 dayjs.extend(timezone);
 
 const { randomUUID } = require("crypto");
-function sendError(res, code, msg, status = 400) {
-  return res.status(status).json({ code, msg });
-}
 // 獲取商品規格選項
 router.post("/specification", async (req, res) => {
   let { product_id } = req.body;
@@ -490,6 +488,7 @@ router.post("/create_order", async (req, res) => {
 // 查詢列表
 router.post("/list", async (req, res) => {
   const { page, pageSize, filter, sort, rangeType, customRange } = req.body;
+  const safeSort = ['ASC', 'DESC'].includes(String(sort).toUpperCase()) ? String(sort).toUpperCase() : 'ASC';
   const offset = (page - 1) * pageSize;
 
   if (page < 1 || pageSize < 1) {
@@ -557,7 +556,7 @@ router.post("/list", async (req, res) => {
       JOIN payment pm 
         ON s.order_no = pm.order_no
       ${whereClause}
-      ORDER BY paid_date ${sort}
+      ORDER BY paid_date ${safeSort}
       LIMIT $${paramIndex++} OFFSET $${paramIndex++}
       `,
       [...values, pageSize, offset]
@@ -728,6 +727,7 @@ router.post("/list", async (req, res) => {
 // 查詢訂單列表
 router.post("/order_list", async (req, res) => {
   const { page, pageSize, sort } = req.body;
+  const safeSort = ['ASC', 'DESC'].includes(String(sort).toUpperCase()) ? String(sort).toUpperCase() : 'ASC';
   const offset = (page - 1) * pageSize;
 
   if (page < 1 || pageSize < 1) {
@@ -753,7 +753,7 @@ router.post("/order_list", async (req, res) => {
       JOIN payment pm 
         ON s.order_no = pm.order_no
       WHERE s.status = 2 AND pm.is_deleted = false
-      ORDER BY paid_date ${sort}
+      ORDER BY paid_date ${safeSort}
       LIMIT $1 OFFSET $2
       `,
       [pageSize, offset]

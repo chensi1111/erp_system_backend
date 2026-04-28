@@ -2,6 +2,7 @@ const express = require('express');
 const logger = require('../logger')
 const db =require('../db')
 const response=require('../utils/response_codes')
+const sendError = require('../utils/send_error');
 const router = express.Router();
 const dayjs = require("dayjs")
 const utc = require('dayjs/plugin/utc');
@@ -9,9 +10,6 @@ const timezone = require('dayjs/plugin/timezone');
 dayjs.extend(utc);
 dayjs.extend(timezone);
 
-function sendError(res, code, msg, status = 400) {
-  return res.status(status).json({ code, msg });
-}
 router.post("/list", async (req, res) => {
   // 使用台灣時區
   const now = dayjs().tz("Asia/Taipei");

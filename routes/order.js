@@ -2,6 +2,7 @@ const express = require("express");
 const logger = require("../logger");
 const db = require("../db");
 const response = require("../utils/response_codes");
+const sendError = require("../utils/send_error");
 const router = express.Router();
 const dayjs = require("dayjs");
 const utc = require("dayjs/plugin/utc");
@@ -10,9 +11,6 @@ dayjs.extend(utc);
 dayjs.extend(timezone);
 
 const { randomUUID } = require("crypto");
-function sendError(res, code, msg, status = 400) {
-  return res.status(status).json({ code, msg });
-}
 
 // 新增資料
 router.post("/create", async (req, res) => {
@@ -187,6 +185,7 @@ router.post("/create", async (req, res) => {
 // 查詢列表
 router.post("/list", async (req, res) => {
   const { page, pageSize, filter, sort,showOneDay,selectedDate } = req.body;
+  const safeSort = ['ASC', 'DESC'].includes(String(sort).toUpperCase()) ? String(sort).toUpperCase() : 'ASC';
   const offset = (page - 1) * pageSize;
   if (page < 1 || pageSize < 1) {
     logger.warn("錯誤的分頁資訊");
@@ -230,7 +229,7 @@ router.post("/list", async (req, res) => {
       `SELECT order_id, product_id,create_date,date, specification, price,total_quantity,prepaid_price,quantities
       FROM orders 
       ${whereClause} 
-      ORDER BY order_id ${sort} 
+      ORDER BY order_id ${safeSort}
       LIMIT $${paramIndex++} OFFSET $${paramIndex++}`,
       [...values, pageSize, offset]
     );

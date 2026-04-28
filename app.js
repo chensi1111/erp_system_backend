@@ -2,6 +2,17 @@ const cors = require('cors');
 const express = require('express');
 const logger= require('./logger');
 const UAParser = require("ua-parser-js");
+
+// 必要：Node 22+ 預設在 unhandled rejection 會 crash；接住後 log 即可，不退出 process
+process.on('unhandledRejection', (reason) => {
+  logger.error('unhandledRejection', {
+    reason: reason instanceof Error ? reason.stack : String(reason),
+  });
+});
+process.on('uncaughtException', (err) => {
+  logger.error('uncaughtException', { message: err.message, stack: err.stack });
+});
+
 const app = express();
 const cookieParser = require("cookie-parser")
 const port = process.env.PORT || 3000;
