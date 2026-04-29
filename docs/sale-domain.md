@@ -242,17 +242,17 @@ CREATE TABLE public.stock_history (
 |---|---|---|---|---|---|
 | `/create` 銷貨 (type=0) | -q | – | -q | -total | -total ✓ |
 | `/create` 退貨 (type=1) | +q | – | +q | +total | +total ✓ |
-| `/create_order` 訂貨 | -q | +q | – | **0** | -total ❌ §6.2 |
+| `/create_order` 訂貨 | -q | +q | – | **0** | 0 ✓ |
 | `/order_complete` 取貨完成 | – | -q | -q | -total | -total ✓ |
 | `/delete` 撤銷銷貨 | +q | – | +q | +total | +total ✓ |
-| `/delete_refund` 撤銷退貨 | -q | – | -q | -total | +total ❌ §6.3 |
-| `/delete_order` 撤銷訂貨 | +q | -q | – | **0** | +total ❌ §6.2 |
+| `/delete_refund` 撤銷退貨 | -q | – | -q | -total | -total ✓ |
+| `/delete_order` 撤銷訂貨 | +q | -q | – | **0** | 0 ✓ |
 | `/delete_pickup` 撤銷取貨 | – | +q | +q | +total | +total ✓ |
 
 > **不變式 1**：`stock.total_quantity = Σ stock_qty[*].all_quantity`。動了 `all_quantity` 才能動 `total_quantity`，反之亦然。
 > **不變式 2**：`available_quantity = all_quantity - reserved_quantity`。任何操作後若不滿足這個等式，邏輯一定寫錯。
 >
-> 觀察：`/create_order` 與 `/delete_order` 的 total_quantity bug 互為反向，happy-path（建單→取消）下會抵銷；但若是「建單→交付」這條 happy-path，`/create_order` 的多扣不會被任何後續路由補回，**stock.total_quantity 會永久少 total**。
+> ⚠️ 歷史偏差：在 §6.2 修正前，`/create_order` 與 `/delete_order` 都會錯誤地動 `total_quantity`。已交付過的訂貨每筆讓 `stock.total_quantity` 永久少 `total`；修正前已建單、修正後才完成或取消的 in-flight 訂貨也會繼續累積偏差。本次未校正歷史資料，需要時再寫獨立 reconciliation script 處理。
 
 ---
 
@@ -314,9 +314,9 @@ CREATE TABLE public.stock_history (
 
 > 這一節是給未來來改 sale 的 Claude／你自己的警示。詳細分析在 [routes/sale.js](../routes/sale.js) 的程式碼審查記錄。
 
-1. **`/create` 與 `/create_order` 早返回未 ROLLBACK**（[routes/sale.js:186-188](../routes/sale.js#L186-L188)、[routes/sale.js:398-400](../routes/sale.js#L398-L400)）：連線會帶著未結束交易回 pool。
-2. **`/create_order` 與 `/delete_order` 不應動 `total_quantity`**（[routes/sale.js:430](../routes/sale.js#L430)、[1037](../routes/sale.js#L1037)）：訂貨流程沒有變動 `all_quantity`，按不變式 `total_quantity = Σ all_quantity` 就不該動 `total_quantity`。`/create_order` 多扣 total，`/delete_order` 多加 total，兩者在「建單→取消」會抵銷，但「建單→`/order_complete`」這條路徑下 `/create_order` 的多扣**永久殘留**。修法：兩個路由把對 `total_quantity` 的更新整段拿掉。
-3. **`/delete_refund` 的 `total_quantity` 加法方向反了**（[routes/sale.js:928](../routes/sale.js#L928)）：退貨原本是 `+total`，撤銷退貨應該 `-total`，但目前仍寫 `+`。
+1. ~~**`/create` 與 `/create_order` 早返回未 ROLLBACK**~~ **[已修]** 兩處 `sendError` 前補上 `await client.query("ROLLBACK")`。
+2. ~~**`/create_order` 與 `/delete_order` 不應動 `total_quantity`**~~ **[已修]** 兩個路由的 `UPDATE stock` 都已移除 `total_quantity = $X` 子句與對應參數宣告。歷史資料偏差未校正（決策保留），如需處理見 §3 注意事項。
+3. ~~**`/delete_refund` 的 `total_quantity` 加法方向反了**~~ **[已修]** `updateQuantity` 改為 `stock_total_quantity - sale_total_quantity`。
 4. **`/create_order` 三段金額驗證的變數寫錯**（[341-352](../routes/sale.js#L341-L352)）：`prepaid_price`、`remaining_price` 都檢查到 `price < 0`。
 5. **`/create_order` 必填欄位寫了兩次同一個**（[324-325](../routes/sale.js#L324-L325)）。
 6. **庫存讀寫沒有 row-level lock**：所有 `SELECT ... stock_qty` 都沒 `FOR UPDATE`，並發下會 lost update。

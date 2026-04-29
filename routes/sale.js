@@ -184,6 +184,7 @@ router.post("/create", async (req, res) => {
     );
 
     if (result.rows.length === 0) {
+      await client.query("ROLLBACK");
       return sendError(res, response.not_found, "商品不存在");
     }
 
@@ -397,6 +398,7 @@ router.post("/create_order", async (req, res) => {
 
     if (result.rows.length === 0) {
       logger.warn("商品不存在");
+      await client.query("ROLLBACK");
       return sendError(res, response.not_found, "商品不存在");
     } else {
       // 檢查庫存
@@ -427,7 +429,6 @@ router.post("/create_order", async (req, res) => {
       //       .join(", ")}`
       //   );
       // }
-      const newTotal = currentTotal - total_quantity;
       // 預留庫存
       const updatedStock = currentStock.map((stockItem) => {
         const soldItem = quantities.find((q) => q.size === stockItem.size);
@@ -443,11 +444,10 @@ router.post("/create_order", async (req, res) => {
 
       await client.query(
         `UPDATE stock
-          SET stock_qty = $1, total_quantity = $2
-          WHERE product_id = $3 AND specification = $4`,
+          SET stock_qty = $1
+          WHERE product_id = $2 AND specification = $3`,
         [
           JSON.stringify(updatedStock),
-          newTotal,
           product_id,
           specification,
         ]
@@ -924,7 +924,7 @@ router.post("/delete_refund", async (req, res) => {
          all_quantity: oldAllQty - soldQty,
       };
     });
-    const updateQuantity = sale_total_quantity + stock_total_quantity
+    const updateQuantity = stock_total_quantity - sale_total_quantity
     const taipeiTime = dayjs().tz("Asia/Taipei").format("YYYY-MM-DD HH:mm:ss");
     await client.query(
       `UPDATE stock SET stock_qty = $1, total_quantity = $2 WHERE product_id = $3 AND specification = $4`,
@@ -1033,10 +1033,9 @@ router.post("/delete_order", async (req, res) => {
         reserved_quantity: oldReservedQty - soldQty,
       };
     });
-    const updateQuantity = sale_total_quantity + stock_total_quantity
     await client.query(
-      `UPDATE stock SET stock_qty = $1, total_quantity = $2 WHERE product_id = $3 AND specification = $4`,
-      [JSON.stringify(updatedStock),updateQuantity, product_id, specification]
+      `UPDATE stock SET stock_qty = $1 WHERE product_id = $2 AND specification = $3`,
+      [JSON.stringify(updatedStock), product_id, specification]
     );
      // 庫存紀錄
     const changeKey = `${order_no}`;
