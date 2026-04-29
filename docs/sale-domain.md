@@ -319,12 +319,12 @@ CREATE TABLE public.stock_history (
 3. ~~**`/delete_refund` 的 `total_quantity` 加法方向反了**~~ **[已修]** `updateQuantity` 改為 `stock_total_quantity - sale_total_quantity`。
 4. **`/create_order` 三段金額驗證的變數寫錯**（[341-352](../routes/sale.js#L341-L352)）：`prepaid_price`、`remaining_price` 都檢查到 `price < 0`。
 5. **`/create_order` 必填欄位寫了兩次同一個**（[324-325](../routes/sale.js#L324-L325)）。
-6. **庫存讀寫沒有 row-level lock**：所有 `SELECT ... stock_qty` 都沒 `FOR UPDATE`，並發下會 lost update。
-7. **庫存不足檢查全被註解**（`/create`、`/create_order`、`/order_complete`）：可賣到負數。
+6. ~~**庫存讀寫沒有 row-level lock**~~ **[已修]** 所有交易內讀 stock 的 SELECT 都加上 `FOR UPDATE`：`/create`、`/create_order`、`/order_complete` 用 `FOR UPDATE`；`/delete`、`/delete_refund`、`/delete_order`、`/delete_pickup` 的 JOIN SELECT 用 `FOR UPDATE OF st`（避開 `LEFT JOIN stock_history`）；`/delete` 的 status 守門也加 `FOR UPDATE`，避免並發兩個 `/delete` 都通過 status=0 檢查。
+7. ~~**庫存不足檢查全被註解**~~ **[非 bug]** 業務邏輯允許負庫存，三段註解（含 `/create_order`、`/order_complete` 內結果未使用的 `insufficientSizes` 計算）已清掉。
 8. **`stock_history.price` 語意不一致**：有的路由存單價、有的存總價。
 9. **`LEFT JOIN stock_history` 沒有指定 `change_type` 也沒 LIMIT**：同一個 `order_no` 會撈到多筆，price 不可靠。
-10. **`/delete` 不檢查 sale.type 就反向回補庫存**：若有人帶退貨單號進來會雙加。
-11. **`/list` 的 `is_deleted = false` 沒指定表名**（[routes/sale.js:499](../routes/sale.js#L499)）：JOIN 的 sale、stock 都沒這欄位（見 DDL），實際運作會自動 bind 到 `pm.is_deleted`，不會報錯，但寫法不嚴謹，應補成 `pm.is_deleted = false`。
+10. ~~**`/delete` 不檢查 sale.type 就反向回補庫存**~~ **[已修]** 進交易後加 `SELECT status FROM sale WHERE order_no = $1` 守門，狀態 ≠ 0 一律 ROLLBACK + `invalid_action`，避免帶非銷貨單號進來時雙加庫存或誤改 status。
+11. ~~**`/list` 的 `is_deleted = false` 沒指定表名**~~ **[已修]** 改為 `pm.is_deleted = false`。
 12. **`stock.last_out_date` 三條 UPDATE 各寫不同東西**：DDL 是 `timestamp`，但
     - [routes/sale.js:265](../routes/sale.js#L265) `/create` 寫 `taipeiTime`（`"YYYY-MM-DD HH:mm:ss"` 完整時刻）✓
     - [routes/sale.js:451](../routes/sale.js#L451) `/create_order` 寫 `req.body.date`（前端給什麼就寫什麼，且訂貨建單實體並沒出貨，根本不該動此欄）

@@ -179,7 +179,8 @@ router.post("/create", async (req, res) => {
     // 查庫存
     const result = await client.query(
       `SELECT product_id, specification, stock_qty, total_quantity
-       FROM stock WHERE product_id = $1 AND specification = $2`,
+       FROM stock WHERE product_id = $1 AND specification = $2
+       FOR UPDATE`,
       [product_id, specification]
     );
 
@@ -191,41 +192,6 @@ router.post("/create", async (req, res) => {
     const currentStock = result.rows[0].stock_qty || [];
     const currentTotal = result.rows[0].total_quantity || 0;
 
-    // ---------------------------------------------------------
-    //   type = 0 → 銷貨：需要檢查庫存
-    // ---------------------------------------------------------
-    // if (type === 0) {
-    //   let insufficientSizes = [];
-
-    //   for (const soldItem of quantities) {
-    //     const stockItem = currentStock.find((s) => s.size === soldItem.size);
-    //     const available = parseInt(stockItem?.available_quantity || "0", 10);
-    //     const soldQty = parseInt(soldItem.quantity || "0", 10);
-
-    //     if (soldQty > available) {
-    //       insufficientSizes.push({
-    //         size: soldItem.size,
-    //         available,
-    //         requested: soldQty,
-    //       });
-    //     }
-    //   }
-
-    //   if (insufficientSizes.length > 0) {
-    //     await client.query("ROLLBACK");
-    //     return sendError(
-    //       res,
-    //       response.insufficient_stock,
-    //       `以下尺寸庫存不足: ${insufficientSizes
-    //         .map((s) => `${s.size}(庫存${s.available}，需求${s.requested})`)
-    //         .join(", ")}`
-    //     );
-    //   }
-    // }
-
-    // ---------------------------------------------------------
-    //   更新庫存（銷貨扣庫存 & 退貨加庫存）
-    // ---------------------------------------------------------
     const updatedStock = currentStock.map((stockItem) => {
       const qItem = quantities.find((q) => q.size === stockItem.size);
       const qty = parseInt(qItem?.quantity || "0", 10);
@@ -392,7 +358,7 @@ router.post("/create_order", async (req, res) => {
       ]
     );
     const result = await client.query(
-      "SELECT product_id, specification,stock_qty,total_quantity FROM stock WHERE product_id = $1 AND specification = $2",
+      "SELECT product_id, specification,stock_qty,total_quantity FROM stock WHERE product_id = $1 AND specification = $2 FOR UPDATE",
       [product_id, specification]
     );
 
@@ -401,34 +367,8 @@ router.post("/create_order", async (req, res) => {
       await client.query("ROLLBACK");
       return sendError(res, response.not_found, "商品不存在");
     } else {
-      // 檢查庫存
       const currentStock = result.rows[0].stock_qty;
-      const currentTotal = result.rows[0].total_quantity;
 
-      let insufficientSizes = [];
-      for (const soldItem of quantities) {
-        const stockItem = currentStock.find((s) => s.size === soldItem.size);
-        const available = parseInt(stockItem?.available_quantity || "0", 10);
-        const soldQty = parseInt(soldItem.quantity || "0", 10);
-        if (soldQty > available) {
-          insufficientSizes.push({
-            size: soldItem.size,
-            available,
-            requested: soldQty,
-          });
-        }
-      }
-      // if (insufficientSizes.length > 0) {
-      //   await client.query("ROLLBACK");
-      //   logger.warn("庫存不足");
-      //   return sendError(
-      //     res,
-      //     response.insufficient_stock,
-      //     `以下尺寸庫存不足: ${insufficientSizes
-      //       .map((s) => `${s.size}(庫存${s.available}，需求${s.requested})`)
-      //       .join(", ")}`
-      //   );
-      // }
       // 預留庫存
       const updatedStock = currentStock.map((stockItem) => {
         const soldItem = quantities.find((q) => q.size === stockItem.size);
@@ -495,7 +435,7 @@ router.post("/list", async (req, res) => {
     return sendError(res, response.invalid_pageInfo, "錯誤的分頁資訊");
   }
 
-  const conditions = ["is_deleted = false"];
+  const conditions = ["pm.is_deleted = false"];
   const values = [];
   let paramIndex = 1;
 
@@ -799,6 +739,20 @@ router.post("/delete", async (req, res) => {
   const client = await db.connect();
   try {
     await client.query("BEGIN");
+    const statusCheck = await client.query(
+      `SELECT status FROM sale WHERE order_no = $1 FOR UPDATE`,
+      [order_no]
+    );
+    if (statusCheck.rows.length === 0) {
+      await client.query("ROLLBACK");
+      logger.warn("找不到紀錄");
+      return sendError(res, response.not_found, "找不到記錄");
+    }
+    if (statusCheck.rows[0].status !== 0) {
+      await client.query("ROLLBACK");
+      logger.warn("此單據非銷貨單，無法刪除");
+      return sendError(res, response.invalid_action, "此單據非銷貨單，無法刪除");
+    }
     await client.query(`UPDATE payment SET is_deleted = $1 WHERE order_no = $2 AND type = $3`, [
       true,
       order_no,
@@ -812,12 +766,13 @@ router.post("/delete", async (req, res) => {
       `SELECT s.product_id,s.product_name, s.specification, s.quantities,s.total_quantity as sale_total_quantity,
       st.stock_qty, st.total_quantity as stock_total_quantity , sh.price
       FROM sale s
-      JOIN stock st 
-      ON s.product_id = st.product_id 
+      JOIN stock st
+      ON s.product_id = st.product_id
       AND s.specification = st.specification
       LEFT JOIN stock_history sh
       ON sh.change_number = s.order_no
-      WHERE s.order_no = $1`,
+      WHERE s.order_no = $1
+      FOR UPDATE OF st`,
       [order_no]
     );
     if (saleResult.rows.length === 0) {
@@ -903,7 +858,8 @@ router.post("/delete_refund", async (req, res) => {
       AND s.specification = st.specification
       LEFT JOIN stock_history sh
       ON sh.change_number = s.order_no
-      WHERE s.order_no = $1`,
+      WHERE s.order_no = $1
+      FOR UPDATE OF st`,
       [order_no]
     );
     if (saleResult.rows.length === 0) {
@@ -1012,7 +968,8 @@ router.post("/delete_order", async (req, res) => {
       AND s.specification = st.specification
       LEFT JOIN stock_history sh
       ON sh.change_number = s.order_no
-      WHERE s.order_no = $1`,
+      WHERE s.order_no = $1
+      FOR UPDATE OF st`,
       [order_no]
     );
     if (orderResult.rows.length === 0) {
@@ -1098,7 +1055,8 @@ router.post("/delete_pickup", async (req, res) => {
       AND s.specification = st.specification
       LEFT JOIN stock_history sh
       ON s.order_no = sh.change_number
-      WHERE s.order_no = $1`,
+      WHERE s.order_no = $1
+      FOR UPDATE OF st`,
       [order_no]
     );
     if (orderResult.rows.length === 0) {
@@ -1265,7 +1223,7 @@ router.post("/order_complete", async (req, res) => {
     );
    
     const productResult = await client.query(
-      "SELECT product_id, specification,stock_qty,total_quantity FROM stock WHERE product_id = $1 AND specification = $2",
+      "SELECT product_id, specification,stock_qty,total_quantity FROM stock WHERE product_id = $1 AND specification = $2 FOR UPDATE",
       [order.product_id, order.specification]
     );
 
@@ -1278,30 +1236,6 @@ router.post("/order_complete", async (req, res) => {
       const currentStock = productResult.rows[0].stock_qty;
       const currentTotal = productResult.rows[0].total_quantity;
 
-      let insufficientSizes = [];
-      for (const soldItem of order.quantities) {
-        const stockItem = currentStock.find((s) => s.size === soldItem.size);
-        const reserved = parseInt(stockItem?.reserved_quantity || "0", 10);
-        const soldQty = parseInt(soldItem.quantity || "0", 10);
-        if (soldQty > reserved) {
-          insufficientSizes.push({
-            size: soldItem.size,
-            reserved,
-            requested: soldQty,
-          });
-        }
-      }
-      // if (insufficientSizes.length > 0) {
-      //   await client.query("ROLLBACK");
-      //   logger.warn("庫存不足");
-      //   return sendError(
-      //     res,
-      //     response.insufficient_stock,
-      //     `以下尺寸預留庫存不足: ${insufficientSizes
-      //       .map((s) => `${s.size}(預留庫存${s.reserved}，需求${s.requested})`)
-      //       .join(", ")}`
-      //   );
-      // }
       const newTotal = currentTotal - order.total_quantity;
       // 扣除庫存
       const updatedStock = currentStock.map((stockItem) => {
