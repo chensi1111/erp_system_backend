@@ -322,7 +322,7 @@ router.post("/create_order", async (req, res) => {
   } = req.body;
   if (
     !product_id ||
-    !product_id ||
+    !remaining_price ||
     !specification ||
     !product_name ||
     !quantities ||
@@ -342,11 +342,11 @@ router.post("/create_order", async (req, res) => {
     logger.warn("錯誤的金額");
     return sendError(res, response.invalid_price, "錯誤的金額");
   }
-  if (isNaN(prepaid_price) || price < 0) {
+  if (isNaN(prepaid_price) || prepaid_price < 0) {
     logger.warn("訂金錯誤");
     return sendError(res, response.invalid_price, "訂金錯誤");
   }
-  if (isNaN(remaining_price) || price < 0) {
+  if (isNaN(remaining_price) || remaining_price < 0) {
     logger.warn("剩餘金額錯誤");
     return sendError(res, response.invalid_price, "剩餘金額錯誤");
   }
@@ -443,12 +443,11 @@ router.post("/create_order", async (req, res) => {
 
       await client.query(
         `UPDATE stock
-          SET stock_qty = $1, total_quantity = $2, last_out_date = $3
-          WHERE product_id = $4 AND specification = $5`,
+          SET stock_qty = $1, total_quantity = $2
+          WHERE product_id = $3 AND specification = $4`,
         [
           JSON.stringify(updatedStock),
           newTotal,
-          date,
           product_id,
           specification,
         ]
@@ -892,7 +891,7 @@ router.post("/delete_refund", async (req, res) => {
       1
     ]);
     await client.query(`UPDATE sale SET status = $1 WHERE order_no = $2`, [
-      3,
+      5,
       order_no,
     ]);
     const saleResult = await client.query(
@@ -1051,7 +1050,7 @@ router.post("/delete_order", async (req, res) => {
         JSON.stringify(quantities),
         taipeiTime,
         changeKey,
-        type,
+        5,
         sale_total_quantity,
         price*sale_total_quantity,
         prepaid_price,
@@ -1325,7 +1324,7 @@ router.post("/order_complete", async (req, res) => {
         [
           JSON.stringify(updatedStock),
           newTotal,
-          taipeiDate,
+          taipeiTime,
           order.product_id,
           order.specification,
         ]
