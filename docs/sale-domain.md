@@ -114,7 +114,7 @@ CREATE TABLE public.stock (
 | `change_type` | 異動類型，見 §2.4 |
 | `quantities` | 該筆異動影響的 size × 數量 |
 | `total_quantity` | 該筆異動的總數 |
-| `price` | ⚠️ **本欄位語意不一致**：部分路由存單價、部分存總價，見 §6 |
+| `price` | 單價（不是總價）。⚠️ 歷史資料中 `change_type IN (5, 6, 7)` 的列在 §6.8 修正前是總價，未做 reconciliation，查歷史時要分段判斷 |
 | `prepaid_price` / `remaining_price` | 訂貨流程才會帶值 |
 | `product_name` | 商品名稱快照 | |
 | `create_date` | 異動時間 |
@@ -317,22 +317,17 @@ CREATE TABLE public.stock_history (
 1. ~~**`/create` 與 `/create_order` 早返回未 ROLLBACK**~~ **[已修]** 兩處 `sendError` 前補上 `await client.query("ROLLBACK")`。
 2. ~~**`/create_order` 與 `/delete_order` 不應動 `total_quantity`**~~ **[已修]** 兩個路由的 `UPDATE stock` 都已移除 `total_quantity = $X` 子句與對應參數宣告。歷史資料偏差未校正（決策保留），如需處理見 §3 注意事項。
 3. ~~**`/delete_refund` 的 `total_quantity` 加法方向反了**~~ **[已修]** `updateQuantity` 改為 `stock_total_quantity - sale_total_quantity`。
-4. **`/create_order` 三段金額驗證的變數寫錯**（[341-352](../routes/sale.js#L341-L352)）：`prepaid_price`、`remaining_price` 都檢查到 `price < 0`。
-5. **`/create_order` 必填欄位寫了兩次同一個**（[324-325](../routes/sale.js#L324-L325)）。
+4. ~~**`/create_order` 三段金額驗證的變數寫錯**~~ **[已修]** `prepaid_price`、`remaining_price` 兩段驗證的右側比較對象從 `price < 0` 改為各自的變數。
+5. ~~**`/create_order` 必填欄位寫了兩次同一個**~~ **[已修]** 重複的 `!product_id` 改為 `!remaining_price`，補上漏檢查的欄位。
 6. ~~**庫存讀寫沒有 row-level lock**~~ **[已修]** 所有交易內讀 stock 的 SELECT 都加上 `FOR UPDATE`：`/create`、`/create_order`、`/order_complete` 用 `FOR UPDATE`；`/delete`、`/delete_refund`、`/delete_order`、`/delete_pickup` 的 JOIN SELECT 用 `FOR UPDATE OF st`（避開 `LEFT JOIN stock_history`）；`/delete` 的 status 守門也加 `FOR UPDATE`，避免並發兩個 `/delete` 都通過 status=0 檢查。
 7. ~~**庫存不足檢查全被註解**~~ **[非 bug]** 業務邏輯允許負庫存，三段註解（含 `/create_order`、`/order_complete` 內結果未使用的 `insufficientSizes` 計算）已清掉。
-8. **`stock_history.price` 語意不一致**：有的路由存單價、有的存總價。
-9. **`LEFT JOIN stock_history` 沒有指定 `change_type` 也沒 LIMIT**：同一個 `order_no` 會撈到多筆，price 不可靠。
+8. ~~**`stock_history.price` 語意不一致**~~ **[已修]** `/delete_order`、`/delete_pickup`、`/order_complete` 三處從 `price * total_quantity`（總價）改為 `price`（單價），與其他路由一致。歷史資料未校正（決策保留），`change_type IN (5, 6, 7)` 在此修正前的列仍為總價，查歷史報表時要分段。
+9. ~~**`LEFT JOIN stock_history` 沒有指定 `change_type` 也沒 LIMIT**~~ **[已修]** 四條 JOIN ON 條件補上 change_type 過濾：`/delete` → 0、`/delete_refund` → 2、`/delete_order` → 4、`/delete_pickup` → 6（鎖定要 undo 的那筆原始事件）。順帶把 `/delete_pickup` 反向的 `ON s.order_no = sh.change_number` 統一成 `sh.change_number = s.order_no`。
 10. ~~**`/delete` 不檢查 sale.type 就反向回補庫存**~~ **[已修]** 進交易後加 `SELECT status FROM sale WHERE order_no = $1` 守門，狀態 ≠ 0 一律 ROLLBACK + `invalid_action`，避免帶非銷貨單號進來時雙加庫存或誤改 status。
 11. ~~**`/list` 的 `is_deleted = false` 沒指定表名**~~ **[已修]** 改為 `pm.is_deleted = false`。
-12. **`stock.last_out_date` 三條 UPDATE 各寫不同東西**：DDL 是 `timestamp`，但
-    - [routes/sale.js:265](../routes/sale.js#L265) `/create` 寫 `taipeiTime`（`"YYYY-MM-DD HH:mm:ss"` 完整時刻）✓
-    - [routes/sale.js:451](../routes/sale.js#L451) `/create_order` 寫 `req.body.date`（前端給什麼就寫什麼，且訂貨建單實體並沒出貨，根本不該動此欄）
-    - [routes/sale.js:1328](../routes/sale.js#L1328) `/order_complete` 寫 `taipeiDate`（只有日期，PG 補 `00:00:00`，同日多次取貨無法排序）
-
-    **修法**：`/create_order` 把 `last_out_date = $3` 整個拿掉；`/order_complete` 將 `taipeiDate` 改成 `taipeiTime`；`/create` 維持不變。
-13. **`/delete_refund` 把 `sale.status` 改成 3**（[routes/sale.js:894-897](../routes/sale.js#L894-L897)）：但 status=3 的業務語意是「訂貨交付（收尾款）」，與退貨單被刪除無關。原作者疑似把 sale.status 與 stock_history.change_type=3 寫混了。**修法：改成 `5`（此單取消）**。
-14. **`/delete_order` 寫錯 `change_type`**（[routes/sale.js:1054](../routes/sale.js#L1054)）：原本用 `type` 變數，type=4 時會寫成 `change_type=4`（前台訂貨）撞號。實際上不論 type=4 或 type=5 在 stock_history 都歸類為「前台訂貨取消」。**修法：那行寫死 `5`**。
+12. ~~**`stock.last_out_date` 三條 UPDATE 各寫不同東西**~~ **[已修]** `/create_order` 移除 `last_out_date` 子句（訂貨建單實體沒出貨，本就不該動此欄）；`/order_complete` 從 `taipeiDate` 改 `taipeiTime`，保留時分秒；`/create` 維持原本的 `taipeiTime` 不變。
+13. ~~**`/delete_refund` 把 `sale.status` 改成 3**~~ **[已修]** 改為 `5`（此單取消），語意對齊。
+14. ~~**`/delete_order` 寫錯 `change_type`**~~ **[已修]** 寫死 `5`，type=4 與 type=5 在 stock_history 統一歸類為前台訂貨取消。
 
 ---
 

@@ -770,7 +770,7 @@ router.post("/delete", async (req, res) => {
       ON s.product_id = st.product_id
       AND s.specification = st.specification
       LEFT JOIN stock_history sh
-      ON sh.change_number = s.order_no
+      ON sh.change_number = s.order_no AND sh.change_type = 0
       WHERE s.order_no = $1
       FOR UPDATE OF st`,
       [order_no]
@@ -853,11 +853,11 @@ router.post("/delete_refund", async (req, res) => {
       `SELECT s.product_id,s.product_name, s.specification, s.quantities,s.total_quantity as sale_total_quantity,
       st.stock_qty, st.total_quantity as stock_total_quantity , sh.price
       FROM sale s
-      JOIN stock st 
-      ON s.product_id = st.product_id 
+      JOIN stock st
+      ON s.product_id = st.product_id
       AND s.specification = st.specification
       LEFT JOIN stock_history sh
-      ON sh.change_number = s.order_no
+      ON sh.change_number = s.order_no AND sh.change_type = 2
       WHERE s.order_no = $1
       FOR UPDATE OF st`,
       [order_no]
@@ -963,11 +963,11 @@ router.post("/delete_order", async (req, res) => {
       `SELECT s.product_id,s.product_name, s.specification, s.quantities,s.total_quantity as sale_total_quantity,
       st.stock_qty, st.total_quantity as stock_total_quantity ,sh.price, sh.prepaid_price, sh.remaining_price
       FROM sale s
-      JOIN stock st 
-      ON s.product_id = st.product_id 
+      JOIN stock st
+      ON s.product_id = st.product_id
       AND s.specification = st.specification
       LEFT JOIN stock_history sh
-      ON sh.change_number = s.order_no
+      ON sh.change_number = s.order_no AND sh.change_type = 4
       WHERE s.order_no = $1
       FOR UPDATE OF st`,
       [order_no]
@@ -1008,7 +1008,7 @@ router.post("/delete_order", async (req, res) => {
         changeKey,
         5,
         sale_total_quantity,
-        price*sale_total_quantity,
+        price,
         prepaid_price,
         remaining_price
       ]
@@ -1054,7 +1054,7 @@ router.post("/delete_pickup", async (req, res) => {
       ON s.product_id = st.product_id 
       AND s.specification = st.specification
       LEFT JOIN stock_history sh
-      ON s.order_no = sh.change_number
+      ON sh.change_number = s.order_no AND sh.change_type = 6
       WHERE s.order_no = $1
       FOR UPDATE OF st`,
       [order_no]
@@ -1097,7 +1097,7 @@ router.post("/delete_pickup", async (req, res) => {
         changeKey,
         7,
         sale_total_quantity,
-        price*sale_total_quantity,
+        price,
         prepaid_price,
         remaining_price
       ]
@@ -1276,7 +1276,7 @@ router.post("/order_complete", async (req, res) => {
         order_no,
         6,
         order.total_quantity,
-        order.price*order.total_quantity,
+        order.price,
         order.amount,
         remainingPrice
       ]

@@ -26,7 +26,6 @@ const colorRouter = require('./routes/color')
 const stockRouter = require('./routes/stock')
 const saleRouter = require('./routes/sale')
 const reportRouter = require('./routes/report')
-const orderRouter = require('./routes/order')
 const dashboardRouter = require('./routes/dashboard')
 const corsOptions = {
   origin: process.env.BASE_URL,
@@ -85,7 +84,6 @@ app.use('/api/color', colorRouter)
 app.use('/api/stock',stockRouter)
 app.use('/api/sale',saleRouter)
 app.use('/api/report', reportRouter)
-app.use('/api/order', orderRouter)
 app.use('/api/dashboard', dashboardRouter)
 
 app.listen(port, () => {
