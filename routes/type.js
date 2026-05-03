@@ -2,6 +2,7 @@ const express = require('express');
 const logger = require('../logger')
 const db =require('../db')
 const response=require('../utils/response_codes')
+const sendError = require('../utils/send_error');
 const router = express.Router();
 const dayjs = require("dayjs")
 const utc = require('dayjs/plugin/utc');
@@ -10,9 +11,6 @@ dayjs.extend(utc);
 dayjs.extend(timezone);
 
 
-function sendError(res, code, msg, status = 400) {
-  return res.status(status).json({ code, msg });
-}
 // 新增
 router.post("/create", async (req, res) => {
     let { type_id,  type_name, remark} = req.body;
@@ -66,6 +64,7 @@ router.post("/create", async (req, res) => {
 // 查詢列表
 router.post("/list", async (req, res) => {
   const { page, pageSize, filter,sort } = req.body;
+  const safeSort = ['ASC', 'DESC'].includes(String(sort).toUpperCase()) ? String(sort).toUpperCase() : 'ASC';
   const offset = (page - 1) * pageSize;
   if (page < 1 || pageSize < 1) {
     logger.warn("錯誤的分頁資訊")
@@ -94,7 +93,7 @@ router.post("/list", async (req, res) => {
       `SELECT type_id, type_name
       FROM type 
       ${whereClause} 
-      ORDER BY type_id ${sort} 
+      ORDER BY type_id ${safeSort}
       LIMIT $${paramIndex++} OFFSET $${paramIndex++}`,
       [...values,pageSize, offset]
     );

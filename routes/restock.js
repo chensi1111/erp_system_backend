@@ -2,6 +2,7 @@ const express = require("express");
 const logger = require("../logger");
 const db = require("../db");
 const response = require("../utils/response_codes");
+const sendError = require("../utils/send_error");
 const router = express.Router();
 const dayjs = require("dayjs")
 const utc = require('dayjs/plugin/utc');
@@ -9,9 +10,6 @@ const timezone = require('dayjs/plugin/timezone');
 dayjs.extend(utc);
 dayjs.extend(timezone);
 const { randomUUID } = require("crypto");
-function sendError(res, code, msg, status = 400) {
-  return res.status(status).json({ code, msg });
-}
 // 獲取商品規格選項
 router.post("/specification", async (req, res) => {
   let { product_id } = req.body;
@@ -303,6 +301,7 @@ router.post("/create", async (req, res) => {
 // 查詢列表
 router.post("/list", async (req, res) => {
   const { page, pageSize, filter,sort,rangeType,customRange } = req.body;
+  const safeSort = ['ASC', 'DESC'].includes(String(sort).toUpperCase()) ? String(sort).toUpperCase() : 'ASC';
   const offset = (page - 1) * pageSize;
   if (page < 1 || pageSize < 1) {
     logger.warn("錯誤的分頁資訊")
@@ -369,7 +368,7 @@ router.post("/list", async (req, res) => {
 
     FROM restock
      ${whereClause}
-     ORDER BY restock_id ${sort}
+     ORDER BY restock_id ${safeSort}
      LIMIT $${paramIndex++} OFFSET $${paramIndex++}
      `,
      [...values, pageSize, offset]

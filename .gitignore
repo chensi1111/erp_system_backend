@@ -51,3 +51,15 @@ out/
 *.ntvs*
 *.njsproj
 *.sln
+
+# Local scratch state (CLAUDE.md rule - personal, not in git)
+.scratch/local/
+
+# Claude Code local settings (per-machine)
+.claude/settings.local.json
+
+# graphify (knowledge graph build artifacts + temp files)
+graphify-out/
+.graphify_*.json
+.graphify_python
+.graphify_uncached.txt
