@@ -289,7 +289,6 @@ router.post("/create_order", async (req, res) => {
   } = req.body;
   if (
     !product_id ||
-    !remaining_price ||
     !specification ||
     !product_name ||
     !quantities ||
